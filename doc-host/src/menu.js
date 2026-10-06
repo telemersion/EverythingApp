@@ -1,13 +1,19 @@
 'use strict';
 
 const { Menu, shell } = require('electron');
+const { showError } = require('./errors');
 
 // current() returns the focused DocumentWindow or null.
 function buildMenu({ current, showOpenDialog, isDev }) {
   const isMac = process.platform === 'darwin';
-  const withDoc = (fn) => () => {
+  // Runs fn on the focused document; anything it throws is shown as "could
+  // not <action> <file>".
+  const withDoc = (action, fn) => () => {
     const doc = current();
-    if (doc) fn(doc);
+    if (!doc) return;
+    Promise.resolve()
+      .then(() => fn(doc))
+      .catch((err) => showError({ action, filePath: doc.filePath, err }));
   };
 
   const template = [
@@ -17,10 +23,10 @@ function buildMenu({ current, showOpenDialog, isDev }) {
       submenu: [
         { label: 'Open…', accelerator: 'CmdOrCtrl+O', click: () => showOpenDialog() },
         { type: 'separator' },
-        { label: 'Save', accelerator: 'CmdOrCtrl+S', click: withDoc((doc) => doc.save()) },
-        { label: 'Close', accelerator: 'CmdOrCtrl+W', click: withDoc((doc) => doc.win.close()) },
+        { label: 'Save', accelerator: 'CmdOrCtrl+S', click: withDoc('save', (doc) => doc.save()) },
+        { label: 'Close', accelerator: 'CmdOrCtrl+W', click: withDoc('close', (doc) => doc.win.close()) },
         { type: 'separator' },
-        { label: isMac ? 'Reveal in Finder' : 'Show in folder', click: withDoc((doc) => shell.showItemInFolder(doc.filePath)) },
+        { label: isMac ? 'Reveal in Finder' : 'Show in folder', click: withDoc('show', (doc) => shell.showItemInFolder(doc.filePath)) },
         ...(isMac ? [] : [{ type: 'separator' }, { role: 'quit' }]),
       ],
     },
@@ -28,11 +34,11 @@ function buildMenu({ current, showOpenDialog, isDev }) {
     {
       label: 'View',
       submenu: [
-        { label: 'Reload', accelerator: 'CmdOrCtrl+R', click: withDoc((doc) => doc.reloadInteractive()) },
+        { label: 'Reload', accelerator: 'CmdOrCtrl+R', click: withDoc('reload', (doc) => doc.reloadInteractive()) },
         ...(isDev ? [{
           label: 'Developer Tools',
           accelerator: isMac ? 'Alt+Cmd+I' : 'Ctrl+Shift+I',
-          click: withDoc((doc) => doc.view.webContents.toggleDevTools()),
+          click: withDoc('open the developer tools for', (doc) => doc.view.webContents.toggleDevTools()),
         }] : []),
       ],
     },

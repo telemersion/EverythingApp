@@ -9,6 +9,7 @@ const { openPath } = require('./open');
 const { buildMenu } = require('./menu');
 const { pathsFromArgv } = require('./argv');
 const { attachProbe } = require('./probe');
+const { showError } = require('./errors');
 
 app.setName('EverythingApp');
 registerSchemePrivileges();
@@ -18,21 +19,28 @@ if (!app.requestSingleInstanceLock()) {
 } else {
   const registry = new Registry();
   const storeDir = () => path.join(app.getPath('userData'), 'versions');
+  // Every open route (dialog, Finder, second instance, argv, drop) ends here.
   const open = (p) => openPath(p, { registry, storeDir: storeDir() }).then((doc) => {
     if (doc && process.env.EV_PROBE) attachProbe(doc);
     return doc;
-  });
+  }).catch((err) => showError({ action: 'open', filePath: p, err }));
   const current = () => {
     const win = BaseWindow.getFocusedWindow();
     return win ? registry.byWindow(win) : null;
   };
 
   async function showOpenDialog() {
-    const { canceled, filePaths } = await dialog.showOpenDialog({
-      properties: ['openFile', 'multiSelections'],
-      filters: [{ name: 'EverythingApp documents', extensions: ['html', 'htm'] }, { name: 'All files', extensions: ['*'] }],
-    });
-    if (!canceled) for (const p of filePaths) await open(p);
+    let result;
+    try {
+      result = await dialog.showOpenDialog({
+        properties: ['openFile', 'multiSelections'],
+        filters: [{ name: 'EverythingApp documents', extensions: ['html', 'htm'] }, { name: 'All files', extensions: ['*'] }],
+      });
+    } catch (err) {
+      await showError({ action: 'show the open dialog', err });
+      return;
+    }
+    if (!result.canceled) for (const p of result.filePaths) await open(p);
   }
 
   registerIpc({ registry, open });

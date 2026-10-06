@@ -11,6 +11,7 @@ const { sectionHashes, classifyChange, watchFile } = require('./watch');
 const { serveDocument } = require('./protocol');
 const { hardenSession, hardenContents, WEB_PREFERENCES } = require('./security');
 const { originFor } = require('./urls');
+const { showError } = require('./errors');
 
 const SAVE_TIMEOUT_MS = 5000;
 
@@ -59,14 +60,17 @@ class DocumentWindow {
 
     this.win.on('close', (event) => this.onClose(event));
     this.win.on('closed', () => this.dispose());
-    this.watcher = watchFile(filePath, () => this.onDiskChange());
+    this.watcher = watchFile(filePath, () => this.onDiskChange()
+      .catch((err) => showError({ action: 'check for changes to', filePath, err })));
     if (process.platform === 'darwin') this.win.setRepresentedFilename(filePath);
 
     registry.add(this);
     this.updateTitle();
     // Resolves once the document has started loading (after the proxy is set).
     this.ready = hardened.then(() => {
-      if (!this.view.webContents.isDestroyed()) this.view.webContents.loadURL(`${this.origin}/`);
+      if (this.view.webContents.isDestroyed()) return;
+      this.view.webContents.loadURL(`${this.origin}/`)
+        .catch((err) => showError({ action: 'load', filePath, err }));
     });
   }
 
@@ -209,7 +213,10 @@ class DocumentWindow {
       this.savedChange = Math.max(this.savedChange, snapshot.changes);
       this.updateTitle();
       // Saving spliced our data into newer behaviour from disk: show it.
-      if (this.known.behaviour !== this.running && !this.isDirty) await this.loadFromDisk();
+      // The save itself succeeded, whatever happens to this reload.
+      if (this.known.behaviour !== this.running && !this.isDirty) {
+        await this.loadFromDisk().catch((err) => showError({ action: 'reload', filePath: this.filePath, err }));
+      }
       return true;
     }
   }
@@ -361,7 +368,7 @@ class DocumentWindow {
     if (this.closeConfirmed) return;
     if (!this.isDirty && !this.saving && !this.nextSave) return;
     event.preventDefault();
-    this.confirmClose();
+    this.confirmClose().catch((err) => showError({ action: 'close', filePath: this.filePath, err }));
   }
 
   // Waits for running saves; closes only if nothing is left unsaved.
