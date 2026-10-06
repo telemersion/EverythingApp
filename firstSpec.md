@@ -307,9 +307,9 @@ Facts established during the design review. Carry them over when this spec is sp
 
 | Fact | Explains | Destination |
 | --- | --- | --- |
-| The HTML parser normalises CRLF to LF inside `<style>` and `<script>`, so the kit's fallback rebuild would change bytes in a CRLF file. | "LF line endings only" (conformance) | `docs/document-spec.md` |
-| In Electron, a cancelled `beforeunload` silently stops the window from closing, with no dialog. A document that registers it would block the host's close prompt. | "Host owns saving" | `docs/document-spec.md` |
 | On macOS, Electron's auto-update (Squirrel.Mac) only works for signed and notarised apps. | Signed installers in M3 | `docs/architecture/distribution.md` (when M3 starts) |
+
+Carried over: the CRLF and `beforeunload` facts now live in [docs/document-spec.md](docs/document-spec.md) (rules 4 and 5).
 
 ## Code session plan
 
