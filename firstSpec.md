@@ -35,7 +35,7 @@ v0.1 is a single-user tool. Team use (documents exchanged between people, shared
 Acceptance criteria:
 
 - [ ] Double-clicking a document file (or dropping it on the host) opens it in the host and selects it in the document list. *(M1: drag and drop and command line; double-click with M3, document list with M2)*
-- [ ] The document renders exactly as it does in Chrome. *(M1: awaiting manual check)*
+- [x] The document renders exactly as it does in Chrome. *(M1, 2026-10-06: hours sheet captured at 1100×768 @2x in headless Chrome and the host; identical layout and computed colours, apart from the Save button, status line and save hint, which the document shows only in the browser. The host capture is tagged with the display profile; converted to sRGB it matches Chrome to the pixel except text anti-aliasing.)*
 - [ ] Ctrl/Cmd+S and File → Save write the current data into the opened file. No dialog appears. The document shows no Save button of its own while running in the host. *(M1: awaiting manual check)*
 - [x] After saving, reopening the file shows the new rows.
 - [x] Saving changes only the data block on disk. All other bytes of the file stay identical.
