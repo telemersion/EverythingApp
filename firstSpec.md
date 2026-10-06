@@ -34,14 +34,14 @@ v0.1 is a single-user tool. Team use (documents exchanged between people, shared
 
 Acceptance criteria:
 
-- [ ] Double-clicking a document file (or dropping it on the host) opens it in the host and selects it in the document list.
-- [ ] The document renders exactly as it does in Chrome.
-- [ ] Ctrl/Cmd+S and File → Save write the current data into the opened file. No dialog appears. The document shows no Save button of its own while running in the host.
-- [ ] After saving, reopening the file shows the new rows.
-- [ ] Saving changes only the data block on disk. All other bytes of the file stay identical.
-- [ ] Closing a document with unsaved changes asks: Save, Don't save, Cancel.
-- [ ] A failed write leaves the original file intact and shows an error.
-- [ ] Any document that conforms to the specification works in the host without host changes; the hours sheet is only the first fixture.
+- [ ] Double-clicking a document file (or dropping it on the host) opens it in the host and selects it in the document list. *(M1: drag and drop and command line; double-click with M3, document list with M2)*
+- [ ] The document renders exactly as it does in Chrome. *(M1: awaiting manual check)*
+- [ ] Ctrl/Cmd+S and File → Save write the current data into the opened file. No dialog appears. The document shows no Save button of its own while running in the host. *(M1: awaiting manual check)*
+- [x] After saving, reopening the file shows the new rows.
+- [x] Saving changes only the data block on disk. All other bytes of the file stay identical.
+- [ ] Closing a document with unsaved changes asks: Save, Don't save, Cancel. *(M1: awaiting manual check)*
+- [x] A failed write leaves the original file intact and shows an error.
+- [x] Any document that conforms to the specification works in the host without host changes; the hours sheet is only the first fixture.
 
 ## Scope of v0.1
 
