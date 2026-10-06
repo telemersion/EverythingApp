@@ -203,18 +203,19 @@ The main process owns all file access; it maps each window to exactly one file p
 7. **Close.** Closing a document that is dirty shows Save / Don't save / Cancel; Save triggers step 3 and closes only on success. Closing the window with several dirty documents shows a summary: Save all / Review each / Cancel. Ctrl/Cmd+S and File → Save always act on the active document.
 8. **Menu.** File: Open, Save, Close, Reveal in folder. View: Document list (show/hide), List / Thumbnails, Reload, Developer tools (dev builds only). Help: Check for updates.
 
-Splicing the data block (main process):
+Splicing the data block (main process, `doc-host/src/splice.js`):
 
 ```js
-const DATA_RE = /(<script type="application\/json" id="ev-data">)[\s\S]*?(<\/script>)/;
 function splice(html, json) {
+  if (typeof json !== 'string') throw new TypeError('The data must be a JSON string.');
   JSON.parse(json);                                   // reject invalid JSON
-  const safe = json.replace(/</g, '\\u003c');
-  return html.replace(DATA_RE, (_, open, close) => open + safe + close);
+  const frame = parseDocument(html);                  // locate sections through the frame
+  if (!frame.ok) throw new Error('The file does not match the document frame.');
+  return buildDocument({ ...frame.parts, data: escapeJson(json) });
 }
 ```
 
-The callback form of `replace` matters: it prevents `$` sequences in the data from being interpreted.
+The data block is located through the frame parser, never by searching for its tag: the kit's own source contains the text `<script type="application/json" id="ev-data">` (it builds the frame for the browser fallback), so a text search finds a second, false data block. Because a conforming file is exactly `buildDocument(parseDocument(file).parts)`, rebuilding it changes only the data block. No regex replacement is involved, so `$` sequences in the data stay literal.
 
 ## Browser fallback
 
