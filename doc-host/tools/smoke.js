@@ -17,6 +17,8 @@ const { checkDocument } = require('../src/conformance');
 const { parseDocument, buildDocument } = require('../src/frame');
 
 registerSchemePrivileges();
+// Keep running if a step closes the window, so its assertion can report it.
+app.on('window-all-closed', () => {});
 
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
