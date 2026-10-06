@@ -87,6 +87,14 @@
   await new Promise((resolve) => setTimeout(resolve, 500));
   report('iframe to https', violations.some((uri) => uri.startsWith('https://example.com')));
 
+  // The host's user style wins over the document's own !important rules.
+  const override = document.createElement('style');
+  override.textContent = 'iframe { pointer-events: auto !important; }';
+  document.head.append(override);
+  frame.style.setProperty('pointer-events', 'auto', 'important');
+  const pointerEvents = getComputedStyle(frame).pointerEvents;
+  report('iframes receive no pointer input', pointerEvents === 'none', pointerEvents);
+
   const before = location.href;
   location.href = 'https://example.com/';
   await new Promise((resolve) => setTimeout(resolve, 1000));

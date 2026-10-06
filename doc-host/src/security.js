@@ -28,10 +28,18 @@ function hardenSession(ses, origin) {
   return ses.setProxy(DEAD_PROXY);
 }
 
+// The preload does not run inside iframes, so file drops onto an iframe
+// would reach it. A user-origin !important rule beats any document rule:
+// iframes receive no pointer input, and drops land on the document itself.
+const NO_IFRAME_INPUT = 'iframe { pointer-events: none !important; }';
+
 // Locks down a document's web contents: no navigation, no new windows, no
-// webviews, no WebRTC traffic outside the (dead) proxy, and a document
-// cannot block closing with beforeunload.
+// webviews, no WebRTC traffic outside the (dead) proxy, no pointer input
+// into iframes, and a document cannot block closing with beforeunload.
 function hardenContents(wc) {
+  wc.on('dom-ready', () => { // every load, including reloads
+    wc.insertCSS(NO_IFRAME_INPUT, { cssOrigin: 'user' }).catch(() => {});
+  });
   wc.setWebRTCIPHandlingPolicy('disable_non_proxied_udp');
   wc.on('will-navigate', (event) => event.preventDefault());
   wc.on('will-redirect', (event) => event.preventDefault());

@@ -79,6 +79,12 @@ async function run(dir) {
   await until('reloaded with the new style', async () =>
     !wc.isLoading() && (await js('getComputedStyle(document.querySelector("h1")).color')) === 'rgb(200, 0, 0)');
   assert.equal(await js('document.querySelectorAll("#rows tr").length'), 1, 'the saved row is still there');
+  await until('iframes receive no pointer input after the reload', async () => (await js(`(() => {
+    const frame = document.body.appendChild(document.createElement('iframe'));
+    const value = getComputedStyle(frame).pointerEvents;
+    frame.remove();
+    return value;
+  })()`)) === 'none');
 
   step('a data change on disk while dirty is never overwritten silently');
   await js('document.getElementById("add").click()');

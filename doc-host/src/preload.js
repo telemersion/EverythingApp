@@ -33,9 +33,10 @@ contextBridge.exposeInMainWorld('evHost', {
 // listeners are registered before any document script, so they run first and
 // stop file drags completely: the document never sees dropped files, neither
 // paths nor contents (not even dataTransfer.items during dragover). Only real
-// drops from the user (isTrusted) open anything. Limit: this preload does not
-// run inside iframes the document creates (about:blank, srcdoc), so a drop
-// onto such a frame is not intercepted here.
+// drops from the user (isTrusted) open anything. This preload does not run
+// inside iframes the document creates (about:blank, srcdoc); the host's user
+// style (security.js) gives iframes no pointer input, so drags and drops
+// over an iframe arrive here, at the document.
 function hasFiles(event) {
   return !!event.dataTransfer && Array.from(event.dataTransfer.types).includes('Files');
 }
