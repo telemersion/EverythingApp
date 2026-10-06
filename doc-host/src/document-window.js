@@ -10,7 +10,7 @@ const { writeDocument, sha256 } = require('./write');
 const { sectionHashes, classifyChange, watchFile } = require('./watch');
 const { serveDocument } = require('./protocol');
 const { hardenSession, hardenContents, WEB_PREFERENCES } = require('./security');
-const { originFor } = require('./urls');
+const { SCHEME, originFor } = require('./urls');
 const { showError } = require('./errors');
 
 const SAVE_TIMEOUT_MS = 5000;
@@ -239,9 +239,9 @@ class DocumentWindow {
   // cannot be read or no longer conforms.
   async refreshKnown() {
     try {
-      const html = await fs.readFile(this.filePath, 'utf8');
-      if (!checkDocument(html).ok) return false;
-      this.acceptOnDisk(html);
+      const check = checkDocument(await fs.readFile(this.filePath));
+      if (!check.ok) return false;
+      this.acceptOnDisk(check.text);
       return true;
     } catch {
       return false;
@@ -262,21 +262,21 @@ class DocumentWindow {
 
   // Only for callers that hold the save turn (doSave) or have settled.
   async loadFromDisk() {
-    let html;
+    let bytes;
     try {
-      html = await fs.readFile(this.filePath, 'utf8');
+      bytes = await fs.readFile(this.filePath);
     } catch (err) {
       await this.ask({ type: 'error', message: `${this.name} could not be read.`, detail: err.message, buttons: ['OK'] });
       return false;
     }
-    const check = checkDocument(html);
+    const check = checkDocument(bytes);
     if (!check.ok) {
       await this.showReport(check.errors, 'The file on disk no longer follows the document specification. The open version keeps running; saving is refused until the file is fixed.');
       return false;
     }
     this.generation++;
-    this.html = html;
-    this.acceptOnDisk(html);
+    this.html = check.text;
+    this.acceptOnDisk(check.text);
     this.running = this.known.behaviour;
     this.latestChange = 0;
     this.savedChange = 0;
@@ -312,9 +312,9 @@ class DocumentWindow {
     await this.settle();
     if (this.win.isDestroyed()) return;
     const { generation, writes } = this;
-    let html;
+    let bytes;
     try {
-      html = await fs.readFile(this.filePath, 'utf8');
+      bytes = await fs.readFile(this.filePath);
     } catch (err) {
       if (err.code !== 'ENOENT') throw err;
       if (!this.missingReported) await this.reportMissing();
@@ -325,10 +325,12 @@ class DocumentWindow {
     // A save or reload ran while we read: it took care of the disk state, and
     // its own write triggers another check. known must only come from it.
     if (this.saving || this.writes !== writes || this.generation !== generation) return;
-    if (sha256(html) === this.knownFileHash) return;
-    this.knownFileHash = sha256(html);
+    // sha256 of the bytes equals sha256 of the text for UTF-8 files.
+    const fileHash = sha256(bytes);
+    if (fileHash === this.knownFileHash) return;
+    this.knownFileHash = fileHash;
 
-    const check = checkDocument(html);
+    const check = checkDocument(bytes);
     if (!check.ok) {
       await this.showReport(check.errors, 'The file was changed on disk and no longer follows the document specification. The open version keeps running; saving is refused until the file is fixed.');
       return;
@@ -430,7 +432,7 @@ class DocumentWindow {
     this.rejectPending(new Error('The document was closed.'));
     this.registry.remove(this);
     if (!this.view.webContents.isDestroyed()) this.view.webContents.close();
-    this.session.protocol.unhandle('ev-doc');
+    this.session.protocol.unhandle(SCHEME);
     this.session.clearStorageData().catch(() => {});
   }
 

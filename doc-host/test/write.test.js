@@ -104,6 +104,44 @@ test('a write that cannot create the .tmp file leaves the original intact', {
   }
   assert.equal(await fs.readFile(target, 'utf8'), original);
   assert.ok(!(await fs.readdir(dir)).some((n) => n.endsWith('.tmp')));
+  assert.deepEqual(await fs.readdir(storeDir), [], 'no version was stored');
+});
+
+test('a save keeps the file permissions', { skip: process.platform === 'win32' && 'POSIX modes' }, async () => {
+  const { filePath, storeDir } = await setup();
+  await fs.chmod(filePath, 0o600);
+  await writeDocument(filePath, '{"n":1}', { storeDir });
+  assert.equal((await fs.stat(filePath)).mode & 0o7777, 0o600);
+});
+
+test('a read-only file is refused and stays unchanged', { skip: process.platform === 'win32' && 'POSIX modes' }, async () => {
+  const { filePath, storeDir } = await setup();
+  const original = await fs.readFile(filePath, 'utf8');
+  await fs.chmod(filePath, 0o444);
+  await assert.rejects(writeDocument(filePath, '{"n":1}', { storeDir }), /The file is read-only\./);
+  assert.equal(await fs.readFile(filePath, 'utf8'), original);
+  assert.equal((await fs.stat(filePath)).mode & 0o7777, 0o444);
+  await assert.rejects(fs.access(storeDir), 'no version was stored');
+  await fs.chmod(filePath, 0o644); // so the clean-up can remove it everywhere
+});
+
+test('a file that is not valid UTF-8 is refused and stays unchanged', async () => {
+  const { filePath, storeDir } = await setup();
+  const [head, tail] = makeDocument({ script: '\n// f\u00e4hrt\n' }).split('f\u00e4hrt');
+  const bytes = Buffer.concat([Buffer.from(head, 'utf8'), Buffer.from('f\u00e4hrt', 'latin1'), Buffer.from(tail, 'utf8')]);
+  await fs.writeFile(filePath, bytes);
+  await assert.rejects(writeDocument(filePath, '{}', { storeDir }), /not valid UTF-8/);
+  assert.deepEqual(await fs.readFile(filePath), bytes);
+});
+
+test('saves of an unchanged file store its version once', async () => {
+  const { filePath, storeDir } = await setup();
+  await writeDocument(filePath, '{"n":1}', { storeDir, now: new Date('2026-10-06T10:00:00.000Z') });
+  await writeDocument(filePath, '{"n":1}', { storeDir, now: new Date('2026-10-06T10:00:01.000Z') });
+  await writeDocument(filePath, '{"n":1}', { storeDir, now: new Date('2026-10-06T10:00:02.000Z') });
+  const names = (await fs.readdir(path.join(storeDir, pathKey(filePath)))).filter((n) => n.endsWith('.html'));
+  // The original, then the file with {"n":1} once (the third save finds it again).
+  assert.deepEqual(names.sort(), ['2026-10-06T10-00-00-000Z.html', '2026-10-06T10-00-01-000Z.html']);
 });
 
 test('writeDocument writes when the data on disk has the expected hash', async () => {

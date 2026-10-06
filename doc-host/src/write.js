@@ -33,14 +33,24 @@ function selectVersionsToDelete(names, now, { keepLatest = KEEP_LATEST, keepDays
   return sorted.filter((n) => !keep.has(n));
 }
 
+// Keeps content in the version store, unless it equals the newest stored
+// version (saving an unchanged file twice keeps one copy). Returns the path
+// of the version that holds the content.
 async function storeVersion({ storeDir, filePath, content, parts, now }) {
   const dir = path.join(storeDir, pathKey(filePath));
   await fs.mkdir(dir, { recursive: true });
-  let name = versionFileName(now);
-  for (let n = 1; await exists(path.join(dir, name)); n++) {
-    name = versionFileName(now).replace('.html', `-${n}.html`);
+  const stored = (await fs.readdir(dir)).filter((n) => n.endsWith('.html')).sort();
+  const newest = stored[stored.length - 1];
+  let name;
+  if (newest && sha256(await fs.readFile(path.join(dir, newest))) === sha256(content)) {
+    name = newest;
+  } else {
+    name = versionFileName(now);
+    for (let n = 1; await exists(path.join(dir, name)); n++) {
+      name = versionFileName(now).replace('.html', `-${n}.html`);
+    }
+    await fs.writeFile(path.join(dir, name), content, 'utf8');
   }
-  await fs.writeFile(path.join(dir, name), content, 'utf8');
   const meta = {
     path: path.resolve(filePath),
     fileName: path.basename(filePath),
@@ -66,14 +76,15 @@ async function exists(p) {
 
 // Writes new data into a document on disk:
 // 1. read the current file and check that it still conforms (and, with
-//    expectedDataHash, that its data is still the data we last saw),
+//    expectedDataHash, that its data is still the data we last saw) and
+//    that it is writable,
 // 2. splice the data into it,
-// 3. keep the current file in the version store,
-// 4. write <name>.tmp next to it, flush, and rename it over the original.
+// 3. write <name>.tmp next to it with the same permissions and flush it,
+// 4. keep the current file in the version store,
+// 5. rename <name>.tmp over the original.
 // Any error leaves the original untouched. Returns the new file content.
 async function writeDocument(filePath, json, { storeDir, now = new Date(), expectedDataHash }) {
-  const current = await fs.readFile(filePath, 'utf8');
-  const check = checkDocument(current);
+  const check = checkDocument(await fs.readFile(filePath));
   if (!check.ok) {
     throw new Error('The file on disk no longer follows the document specification, so it was not changed: ' +
       check.errors.map((e) => e.message).join(' '));
@@ -83,8 +94,16 @@ async function writeDocument(filePath, json, { storeDir, now = new Date(), expec
     err.code = 'EV_DATA_CONFLICT';
     throw err;
   }
+  // The rename would replace a read-only file all the same: refuse it here.
+  const { mode } = await fs.stat(filePath);
+  try {
+    await fs.access(filePath, fs.constants.W_OK);
+  } catch (err) {
+    if (err.code === 'ENOENT') throw err;
+    throw new Error('The file is read-only.');
+  }
+  const current = check.text;
   const next = splice(current, json);
-  await storeVersion({ storeDir, filePath, content: current, parts: check.parts, now });
 
   const tmp = `${filePath}.tmp`;
   try {
@@ -92,9 +111,11 @@ async function writeDocument(filePath, json, { storeDir, now = new Date(), expec
     try {
       await handle.writeFile(next, 'utf8');
       await handle.sync();
+      await handle.chmod(mode & 0o7777);
     } finally {
       await handle.close();
     }
+    await storeVersion({ storeDir, filePath, content: current, parts: check.parts, now });
     await fs.rename(tmp, filePath);
   } catch (err) {
     await fs.rm(tmp, { force: true });

@@ -16,9 +16,15 @@ const FIELD_RULES = {
   kitVersion: [/^\d+\.\d+\.\d+$/, 'a kit version such as "1.0.0"'],
 };
 
+// fatal: invalid bytes throw instead of becoming U+FFFD. ignoreBOM: a BOM
+// stays in the text, so the bom rule reports it.
+const UTF8 = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
+
 // A file is a document if and only if it contains the ev-host-api meta tag.
-function isDocument(text) {
-  return /<meta name="ev-host-api"/.test(text);
+// Takes text or the file's bytes (the tag is ASCII).
+function isDocument(textOrBytes) {
+  const marker = '<meta name="ev-host-api"';
+  return typeof textOrBytes === 'string' ? textOrBytes.includes(marker) : Buffer.from(textOrBytes).includes(marker);
 }
 
 function problem(code, message, line) {
@@ -30,9 +36,22 @@ function preview(text) {
   return JSON.stringify(firstLine.length > 60 ? firstLine.slice(0, 60) + '…' : firstLine);
 }
 
-// Checks a file against the document specification.
-// Returns { ok, errors: [{ code, message, line? }], parts?, api? }.
-function checkDocument(html) {
+// Checks a file against the document specification. Takes the file's bytes
+// (as read from disk) or its text.
+// Returns { ok, errors: [{ code, message, line? }], text?, parts?, api? };
+// text is the decoded file.
+function checkDocument(input) {
+  let html = input;
+  if (typeof input !== 'string') {
+    try {
+      html = UTF8.decode(input);
+    } catch {
+      return {
+        ok: false,
+        errors: [problem('encoding', 'The file is not valid UTF-8 (it may be saved as Latin-1 or Windows-1252). Save it as UTF-8 without BOM.')],
+      };
+    }
+  }
   const errors = [];
 
   if (html.charCodeAt(0) === 0xfeff) {
@@ -63,7 +82,7 @@ function checkDocument(html) {
     errors.push(problem('frame',
       `The file does not match the document frame: expected ${preview(frame.expected)} ` +
       `but found ${preview(text.slice(frame.offset))}.`, lineOf(text, frame.offset)));
-    return { ok: false, errors };
+    return { ok: false, errors, text: html };
   }
   const parts = frame.parts;
 
@@ -99,7 +118,7 @@ function checkDocument(html) {
     errors.push(problem('script-comment', 'The script section contains "<!--", which changes how browsers parse it. Write "<\\!--" instead.'));
   }
 
-  return { ok: errors.length === 0, errors, parts, api: Number(parts.api) };
+  return { ok: errors.length === 0, errors, text: html, parts, api: Number(parts.api) };
 }
 
 // The text shown in the refusal dialog and copied by "Copy report".

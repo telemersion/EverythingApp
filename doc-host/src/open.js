@@ -12,13 +12,13 @@ const MAX_FILE_BYTES = 60 * 1024 * 1024;
 // document, focuses the window if the document is already open.
 async function openPath(rawPath, { registry, storeDir }) {
   let filePath;
-  let html;
+  let bytes;
   try {
     filePath = await fs.realpath(path.resolve(rawPath));
     const stat = await fs.stat(filePath);
     if (!stat.isFile()) throw new Error('This is not a file.');
     if (stat.size > MAX_FILE_BYTES) throw new Error('The file is larger than 60 MB.');
-    html = await fs.readFile(filePath, 'utf8');
+    bytes = await fs.readFile(filePath);
   } catch (err) {
     await dialog.showMessageBox({ type: 'error', message: `${path.basename(rawPath)} could not be opened.`, detail: err.message });
     return null;
@@ -30,7 +30,7 @@ async function openPath(rawPath, { registry, storeDir }) {
     return open;
   }
 
-  if (!isDocument(html)) {
+  if (!isDocument(bytes)) {
     await dialog.showMessageBox({
       type: 'info',
       message: `${path.basename(filePath)} is not an EverythingApp document.`,
@@ -39,7 +39,7 @@ async function openPath(rawPath, { registry, storeDir }) {
     return null;
   }
 
-  const check = checkDocument(html);
+  const check = checkDocument(bytes);
   if (!check.ok) {
     const report = formatReport(filePath, check.errors);
     const { response } = await dialog.showMessageBox({
@@ -53,7 +53,7 @@ async function openPath(rawPath, { registry, storeDir }) {
     return null;
   }
 
-  const doc = new DocumentWindow({ filePath, html, parts: check.parts, storeDir, registry });
+  const doc = new DocumentWindow({ filePath, html: check.text, parts: check.parts, storeDir, registry });
   await doc.ready;
   return doc;
 }

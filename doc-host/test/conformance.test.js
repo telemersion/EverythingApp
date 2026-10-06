@@ -62,6 +62,32 @@ for (const [code, make] of INVALID) {
   });
 }
 
+// Bytes as read from disk: a Latin-1 "ä" (0xE4) in a script comment.
+function latin1Document() {
+  const [head, tail] = makeDocument({ script: '\n// Datei f\u00e4hrt\nwindow.x = 1;\n' }).split('f\u00e4hrt');
+  return Buffer.concat([Buffer.from(head, 'utf8'), Buffer.from('f\u00e4hrt', 'latin1'), Buffer.from(tail, 'utf8')]);
+}
+
+test('file bytes that are not valid UTF-8 are refused with encoding only', () => {
+  const result = checkDocument(latin1Document());
+  assert.equal(result.ok, false);
+  assert.deepEqual(result.errors.map((e) => e.code), ['encoding']);
+  assert.match(result.errors[0].message, /not valid UTF-8/);
+});
+
+test('file bytes in UTF-8 are checked like text and return the text', () => {
+  const html = makeDocument({ script: '\n// f\u00e4hrt\nwindow.x = 1;\n' });
+  const result = checkDocument(Buffer.from(html, 'utf8'));
+  assert.deepEqual(result.errors, []);
+  assert.equal(result.text, html);
+  assert.deepEqual(codes(Buffer.from('\ufeff' + makeDocument(), 'utf8')), ['bom'], 'the decoder keeps the BOM');
+});
+
+test('isDocument also takes file bytes', () => {
+  assert.equal(isDocument(latin1Document()), true);
+  assert.equal(isDocument(Buffer.from('<p>hello</p>')), false);
+});
+
 test('a newer API version is refused with the update message only', () => {
   const result = checkDocument(makeDocument({ api: '2' }));
   assert.equal(result.ok, false);
