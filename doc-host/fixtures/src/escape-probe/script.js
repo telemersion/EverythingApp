@@ -53,8 +53,14 @@
     const complete = new Promise((resolve) => {
       pc.onicegatheringstatechange = () => { if (pc.iceGatheringState === 'complete') resolve(); };
     });
-    pc.createDataChannel('probe');
-    await pc.setLocalDescription(await pc.createOffer());
+    try {
+      pc.createDataChannel('probe');
+      await pc.setLocalDescription(await pc.createOffer());
+    } catch (err) {
+      pc.close();
+      report(name, false, 'could not start ICE gathering: ' + (err && err.message));
+      return;
+    }
     await Promise.race([complete, new Promise((resolve) => setTimeout(resolve, 3000))]);
     pc.close();
     const external = types.filter((t) => t === 'srflx' || t === 'relay');
