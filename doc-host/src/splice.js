@@ -2,7 +2,7 @@
 
 const { parseDocument, buildDocument } = require('./frame');
 
-// Every "<" becomes the six characters < (backslash, u, 0, 0, 3, c),
+// Every "<" becomes \u003c,
 // so the data can never close its script element.
 function escapeJson(json) {
   return json.replace(/</g, '\\u003c');
