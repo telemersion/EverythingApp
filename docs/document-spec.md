@@ -62,10 +62,10 @@ The file ends with a single line break after `</html>`.
 2. **Self-contained.** No external scripts, stylesheets, fonts or images. Inline everything; embed assets as `data:` URIs. Inside the host, every network request is blocked: no name lookups, no WebRTC, and every connection is refused.
 3. **Runtime UI.** The script section renders all UI into `#ev-app` at load time. `#ev-app` is empty in the saved file.
 4. **The host owns saving.** When `window.evHost` exists, the document shows no Save button and registers neither a Ctrl/Cmd+S handler nor `beforeunload`. The kit follows this on its side: it registers its own Ctrl/Cmd+S and `beforeunload` handlers only when `evHost` is absent. The document's own UI must follow it too: show a Save button and status line only when `doc.hosted` is `false` (section 5). *Why:* inside the host a Save button would do nothing (`save()` returns `false`), and the host ignores `beforeunload` (it cannot block closing). So this rule is about a consistent UI, not about safety.
-5. **UTF-8, LF only, no BOM.** *Why:* the HTML parser turns CRLF into LF inside `<style>` and `<script>`. The kit's fallback rebuilds the file from that parsed text, so a CRLF file would change bytes outside the data block on its first browser save.
+5. **UTF-8, LF only, no BOM.** The file must be valid UTF-8; the host refuses files in any other encoding (such as Latin-1 or Windows-1252). *Why:* the HTML parser turns CRLF into LF inside `<style>` and `<script>`. The kit's fallback rebuilds the file from that parsed text, so a CRLF file would change bytes outside the data block on its first browser save.
 6. **No storage between sessions.** Inside the host, `localStorage`, IndexedDB and cookies start empty on every open. View state (filters, scroll position) lasts one session. Anything that should survive belongs in the data block.
 7. **No navigation, no new windows.** Links that navigate away, `window.open` and form submissions are blocked. Iframes and frames cannot load anything (the content security policy refuses it) and, inside the host, receive no pointer input.
-8. **Files come in only through the user.** Inside the host, a document can receive files only through routes the user controls: a file picker (`<input type="file">`) and paste. It never sees file paths. Dropping files onto a document opens them in the host; the document never receives dropped files. Whatever a document imports lives in the data block (images as `data:` URIs). The data block is limited to 50 MB, and every save copies the whole file into the version store, so keep imports small.
+8. **Files come in only through the user.** Inside the host, a document can receive files only through routes the user controls: a file picker (`<input type="file">`), paste and, in one case, a drop (below). It never sees file paths. Dropping files onto a document opens them in the host; the document does not receive the dropped files. Known limit of M1: a document that replaces itself with `document.open()` after loading removes the host's drop guard and then receives files the user drops onto it (their contents, not their paths). Do not drop files onto a document you do not trust. Whatever a document imports lives in the data block (images as `data:` URIs). The data block is limited to 50 MB, and every save copies the whole file into the version store, so keep imports small.
 
 ## 4. The data block
 
@@ -136,6 +136,7 @@ The host checks every file before opening it and refuses any file that breaks th
 
 | Code | Problem |
 | --- | --- |
+| `encoding` | The file is not valid UTF-8. Nothing else is checked. |
 | `bom` | The file starts with a byte order mark. |
 | `line-endings` | The file contains CR characters. |
 | `api-missing` | `<meta name="ev-host-api">` is missing. |

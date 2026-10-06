@@ -1343,7 +1343,7 @@ Expected: the printed text is identical to the frame block in section 2 of `docs
 grep -o "problem('[a-z-]*'" src/conformance.js | sort -u
 ```
 
-Expected: the same 14 codes as the table in section 8.
+Expected: the same 15 codes as the table in section 8.
 
 - [ ] **Step 3: Mark the carried-over facts in the product spec**
 
@@ -4001,7 +4001,7 @@ Expected: `ℹ pass 69`, 12 probe PASS lines, `[smoke] all checks passed`; exit 
 | After saving, reopening shows the new rows | Task 9, step 5.3. |
 | Saving changes only the data block | Smoke test ("everything but the data is unchanged"); `test/write.test.js`. |
 | Closing with unsaved changes asks Save / Don't save / Cancel | Task 9, step 5.4. |
-| A failed write leaves the original intact and shows an error | Task 9, step 5.5; `test/write.test.js`. |
+| A failed write leaves the original intact and shows an error | Task 9, step 5.5; `test/write.test.js`; `npm run smoke` step "a failed write leaves the original intact and shows an error" (read-only file). |
 | Any conforming document works without host changes | The escape probe and the hours sheet share no code with the host; a third document assembled from new sources (try one) opens and saves. |
 
 - [ ] **Step 3: Record the result in the spec**
@@ -4030,3 +4030,5 @@ Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
 - No file association, installers or auto-update (M3), and no clean-up of orphaned version stores of deleted or moved documents (M3).
 - The 60 MB file limit is checked only when opening. Reloads after external changes and the pre-write read do not check it, so a save can produce a file above 60 MB (escaping `<` grows the data) that the host then refuses to open.
 - The DNS block is app-wide (`host-resolver-rules`); M3 must add the update host as an exception.
+- Saving writes `<name>.tmp` and renames it over the original. The file's permissions are kept and read-only files are refused, but extended attributes, ACLs, Finder tags and hard links are not preserved.
+- The drop guard can be removed by the document itself: `document.open()` (called after loading) erases every event listener on the page, including the preload's drop and drag listeners, and the document then receives files the user drops onto it (contents, not paths). The user style that gives iframes no pointer input survives. The isolated preload cannot block `document.open` reliably; a guard outside the page is later work.

@@ -47,7 +47,9 @@ contextBridge.exposeInMainWorld('evHost', {
 // drops from the user (isTrusted) open anything. This preload does not run
 // inside iframes the document creates (about:blank, srcdoc); the host's user
 // style (security.js) gives iframes no pointer input, so drags and drops
-// over an iframe arrive here, at the document.
+// over an iframe arrive here, at the document. Known limit of M1: a document
+// that calls document.open() after loading erases every listener on the page,
+// these included (the user style survives); it then receives dropped files.
 function hasFiles(event) {
   return !!event.dataTransfer && Array.from(event.dataTransfer.types).includes('Files');
 }
