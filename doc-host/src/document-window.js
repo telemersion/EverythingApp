@@ -132,37 +132,60 @@ class DocumentWindow {
   }
 
   async doSave() {
-    if (this.diskDataChanged) {
-      const choice = await this.ask({
-        type: 'warning',
-        message: `The data in ${this.name} was changed on disk since you opened it.`,
-        detail: 'Keep mine overwrites the data on disk with yours. Take the version on disk discards your changes.',
-        buttons: ['Keep mine', 'Take the version on disk', 'Cancel'],
-        defaultId: 2,
-        cancelId: 2,
-      });
-      if (choice === null || choice === 2) return false;
-      if (choice === 1) return this.reloadFromDisk();
+    for (;;) {
+      if (this.diskDataChanged) {
+        const choice = await this.ask({
+          type: 'warning',
+          message: `The data in ${this.name} was changed on disk since you opened it.`,
+          detail: 'Keep mine overwrites the data on disk with yours. Take the version on disk discards your changes.',
+          buttons: ['Keep mine', 'Take the version on disk', 'Cancel'],
+          defaultId: 2,
+          cancelId: 2,
+        });
+        if (choice === null || choice === 2) return false;
+        if (choice === 1) return this.reloadFromDisk();
+      }
+      try {
+        const snapshot = await this.requestSnapshot();
+        const problem = validateSnapshot(snapshot.json);
+        if (problem) throw new Error(problem);
+        // Refused if the data on disk is not the data we last saw (known).
+        const written = await writeDocument(this.filePath, snapshot.json,
+          { storeDir: this.storeDir, expectedDataHash: this.known.data });
+        this.acceptOnDisk(written);
+        this.diskDataChanged = false;
+        this.savedChange = Math.max(this.savedChange, snapshot.changes);
+        this.updateTitle();
+        // Saving spliced our data into newer behaviour from disk: show it.
+        if (this.known.behaviour !== this.running && !this.isDirty) await this.reloadFromDisk();
+        return true;
+      } catch (err) {
+        // Someone changed the data just before the write: ask, as if the
+        // watcher had reported it.
+        if (err.code === 'EV_DATA_CONFLICT' && await this.refreshKnown()) {
+          this.diskDataChanged = true;
+          continue;
+        }
+        await this.ask({
+          type: 'error',
+          message: `${this.name} could not be saved. The file on disk was not changed.`,
+          detail: err.message,
+          buttons: ['OK'],
+        });
+        return false;
+      }
     }
+  }
+
+  // Re-reads what is on disk into known/knownFileHash. False if the file
+  // cannot be read or no longer conforms.
+  async refreshKnown() {
     try {
-      const snapshot = await this.requestSnapshot();
-      const problem = validateSnapshot(snapshot.json);
-      if (problem) throw new Error(problem);
-      const written = await writeDocument(this.filePath, snapshot.json, { storeDir: this.storeDir });
-      this.acceptOnDisk(written);
-      this.diskDataChanged = false;
-      this.savedChange = Math.max(this.savedChange, snapshot.changes);
-      this.updateTitle();
-      // Saving spliced our data into newer behaviour from disk: show it.
-      if (this.known.behaviour !== this.running && !this.isDirty) await this.reloadFromDisk();
+      const html = await fs.readFile(this.filePath, 'utf8');
+      if (!checkDocument(html).ok) return false;
+      this.acceptOnDisk(html);
       return true;
-    } catch (err) {
-      await this.ask({
-        type: 'error',
-        message: `${this.name} could not be saved. The file on disk was not changed.`,
-        detail: err.message,
-        buttons: ['OK'],
-      });
+    } catch {
       return false;
     }
   }

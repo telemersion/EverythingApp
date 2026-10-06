@@ -86,6 +86,27 @@ async function run(dir) {
   await until('conflict detected', () => doc.diskDataChanged);
   assert.equal(await fs.readFile(filePath, 'utf8'), external, 'the host did not write over the external content');
 
+  // Dialogs are answered by stubbing doc.ask (it would block on a real dialog).
+  const answer = (...responses) => { doc.ask = async () => responses.shift() ?? null; };
+  const realAsk = doc.ask;
+
+  step('taking the version on disk resolves the conflict');
+  answer(1); // Take the version on disk
+  assert.equal(await doc.save(), true);
+  assert.equal(doc.isDirty, false);
+  assert.equal(doc.diskDataChanged, false);
+
+  step('a data change on disk just before saving is caught at write time');
+  await js('document.getElementById("add").click()');
+  await until('dirty again', () => doc.isDirty);
+  const late = buildDocument({ ...parseDocument(external).parts, data: '{"rows":[],"note":"late"}' });
+  await fs.writeFile(filePath, late, 'utf8');
+  answer(2); // Cancel in the conflict prompt
+  assert.equal(await doc.save(), false); // before the watcher's 200 ms debounce
+  assert.equal(await fs.readFile(filePath, 'utf8'), late, 'the host did not write over the external content');
+  assert.equal(doc.diskDataChanged, true);
+  doc.ask = realAsk;
+
   step('all checks passed');
 }
 

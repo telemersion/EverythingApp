@@ -7,7 +7,8 @@ const os = require('node:os');
 const path = require('node:path');
 const { pathKey, selectVersionsToDelete, writeDocument } = require('../src/write');
 const { splice } = require('../src/splice');
-const { makeDocument } = require('./helpers');
+const { sectionHashes } = require('../src/watch');
+const { makeDocument, makeParts } = require('./helpers');
 
 const tempDirs = [];
 
@@ -103,6 +104,22 @@ test('a write that cannot create the .tmp file leaves the original intact', {
   }
   assert.equal(await fs.readFile(target, 'utf8'), original);
   assert.ok(!(await fs.readdir(dir)).some((n) => n.endsWith('.tmp')));
+});
+
+test('writeDocument writes when the data on disk has the expected hash', async () => {
+  const { filePath, storeDir } = await setup();
+  const expectedDataHash = sectionHashes(makeParts()).data;
+  await writeDocument(filePath, '{"n":1}', { storeDir, expectedDataHash });
+  assert.match(await fs.readFile(filePath, 'utf8'), /\{"n":1\}/);
+});
+
+test('writeDocument refuses with EV_DATA_CONFLICT when the data on disk changed', async () => {
+  const { filePath, storeDir } = await setup();
+  const original = await fs.readFile(filePath, 'utf8');
+  const expectedDataHash = sectionHashes(makeParts({ data: '{"rows":[]}' })).data;
+  await assert.rejects(writeDocument(filePath, '{"n":1}', { storeDir, expectedDataHash }), { code: 'EV_DATA_CONFLICT' });
+  assert.equal(await fs.readFile(filePath, 'utf8'), original);
+  await assert.rejects(fs.access(storeDir), 'no version was stored');
 });
 
 test('selectVersionsToDelete keeps the newest 20 plus one per day for 30 days', () => {

@@ -5,6 +5,7 @@ const path = require('node:path');
 const { checkDocument } = require('./conformance');
 const { sha256 } = require('./hash');
 const { splice } = require('./splice');
+const { sectionHashes } = require('./watch');
 
 const KEEP_LATEST = 20;
 const KEEP_DAYS = 30;
@@ -64,17 +65,23 @@ async function exists(p) {
 }
 
 // Writes new data into a document on disk:
-// 1. read the current file and check that it still conforms,
+// 1. read the current file and check that it still conforms (and, with
+//    expectedDataHash, that its data is still the data we last saw),
 // 2. splice the data into it,
 // 3. keep the current file in the version store,
 // 4. write <name>.tmp next to it, flush, and rename it over the original.
 // Any error leaves the original untouched. Returns the new file content.
-async function writeDocument(filePath, json, { storeDir, now = new Date() }) {
+async function writeDocument(filePath, json, { storeDir, now = new Date(), expectedDataHash }) {
   const current = await fs.readFile(filePath, 'utf8');
   const check = checkDocument(current);
   if (!check.ok) {
     throw new Error('The file on disk no longer follows the document specification, so it was not changed: ' +
       check.errors.map((e) => e.message).join(' '));
+  }
+  if (expectedDataHash !== undefined && sectionHashes(check.parts).data !== expectedDataHash) {
+    const err = new Error('The data on disk was changed by someone else since it was last read.');
+    err.code = 'EV_DATA_CONFLICT';
+    throw err;
   }
   const next = splice(current, json);
   await storeVersion({ storeDir, filePath, content: current, parts: check.parts, now });
