@@ -125,6 +125,21 @@ async function run(dir) {
   assert.equal(doc.isDirty, true);
   assert.notEqual(await fs.readFile(filePath, 'utf8'), late, 'Keep mine wrote our data');
 
+  step('Save and reload does not reload if an edit came after the snapshot');
+  doc.requestSnapshot = async function () {
+    const snapshot = await takeSnapshot.call(this);
+    await js('document.getElementById("add").click()');
+    await until('edit after the snapshot', () => doc.latestChange > snapshot.changes);
+    return snapshot;
+  };
+  const generation = doc.generation;
+  answer(0); // Save and reload
+  await doc.reloadInteractive(); // View → Reload on a dirty document
+  doc.requestSnapshot = takeSnapshot;
+  doc.ask = realAsk;
+  assert.equal(doc.generation, generation, 'the page was not reloaded');
+  assert.equal(doc.isDirty, true);
+
   step('a moved file is reported once, not written again');
   const shown = [];
   doc.ask = async (options) => { shown.push(options.message); return 0; };

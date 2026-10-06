@@ -285,7 +285,9 @@ class DocumentWindow {
         cancelId: 2,
       });
       if (choice === null || choice === 2) return;
-      if (choice === 0 && !(await this.save())) return;
+      // As when closing: an edit after the snapshot (or a failed save) keeps
+      // the page; the dirty marker shows why.
+      if (choice === 0 && (!(await this.save()) || this.isDirty)) return;
     }
     await this.reloadFromDisk();
   }
