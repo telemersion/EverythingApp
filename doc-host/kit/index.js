@@ -2,15 +2,11 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
-const crypto = require('node:crypto');
+const { sha256 } = require('../src/write');
 
 // Published kits never change. published.json pins each kit file's hash;
 // loading fails loudly if a published kit file was edited.
 const PUBLISHED = require('./published.json');
-
-function sha256(text) {
-  return crypto.createHash('sha256').update(text, 'utf8').digest('hex');
-}
 
 // The kit section of a document is a newline followed by the kit file.
 function kitSectionText(file) {
