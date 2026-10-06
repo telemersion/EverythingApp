@@ -40,7 +40,7 @@ class DocumentWindow {
     const id = crypto.randomBytes(16).toString('hex');
     this.origin = originFor(id);
     this.session = session.fromPartition(`ev-doc-${id}`); // no "persist:" = in memory
-    hardenSession(this.session, this.origin);
+    const hardened = hardenSession(this.session, this.origin);
     serveDocument(this.session, this.origin, () => this.html);
 
     this.win = new BaseWindow({ width: 1100, height: 800, title: this.name });
@@ -60,7 +60,10 @@ class DocumentWindow {
 
     registry.add(this);
     this.updateTitle();
-    this.view.webContents.loadURL(`${this.origin}/`);
+    // Resolves once the document has started loading (after the proxy is set).
+    this.ready = hardened.then(() => {
+      if (!this.view.webContents.isDestroyed()) this.view.webContents.loadURL(`${this.origin}/`);
+    });
   }
 
   get isDirty() {

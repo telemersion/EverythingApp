@@ -36,6 +36,31 @@
     });
   }
 
+  // PASS when ICE gathering finds no server-reflexive or relay candidate,
+  // i.e. the STUN server was never reached.
+  async function noIceToServer(name, stunUrl) {
+    let pc;
+    try {
+      pc = new RTCPeerConnection({ iceServers: [{ urls: stunUrl }] });
+    } catch (err) {
+      report(name, true, 'RTCPeerConnection unavailable');
+      return;
+    }
+    const types = [];
+    pc.onicecandidate = (e) => {
+      if (e.candidate) types.push(e.candidate.type || (/ typ (\w+)/.exec(e.candidate.candidate) || [])[1]);
+    };
+    const complete = new Promise((resolve) => {
+      pc.onicegatheringstatechange = () => { if (pc.iceGatheringState === 'complete') resolve(); };
+    });
+    pc.createDataChannel('probe');
+    await pc.setLocalDescription(await pc.createOffer());
+    await Promise.race([complete, new Promise((resolve) => setTimeout(resolve, 3000))]);
+    pc.close();
+    const external = types.filter((t) => t === 'srflx' || t === 'relay');
+    report(name, external.length === 0, types.join(',') || 'no candidates');
+  }
+
   report('runs inside the host', doc.hosted);
   report('host API is data-only', Object.keys(window.evHost).sort().join(',') === 'markDirty,onSaveRequest,version',
     Object.keys(window.evHost).join(','));
@@ -48,6 +73,8 @@
   await blockedFetch('fetch own origin', location.origin + '/other.html');
   await blockedImage('image from https', 'https://www.google.com/favicon.ico');
   await blockedImage('image from file://', 'file:///System/Library/CoreServices/Finder.app/Contents/Resources/Finder.icns');
+
+  await noIceToServer('WebRTC reaches no STUN server', 'stun:stun.l.google.com:19302');
 
   const opened = window.open('https://example.com/');
   report('window.open', !opened);

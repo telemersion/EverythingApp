@@ -53,7 +53,9 @@ async function openPath(rawPath, { registry, storeDir }) {
     return null;
   }
 
-  return new DocumentWindow({ filePath, html, parts: check.parts, storeDir, registry });
+  const doc = new DocumentWindow({ filePath, html, parts: check.parts, storeDir, registry });
+  await doc.ready;
+  return doc;
 }
 
 module.exports = { openPath };
