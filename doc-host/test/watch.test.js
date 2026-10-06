@@ -52,8 +52,9 @@ test('watchFile reports a replaced file once, debounced, and ignores siblings', 
 function fakeWatch() {
   const { EventEmitter } = require('node:events');
   const watchers = [];
-  const watch = () => {
+  const watch = (_dir, listener) => {
     const watcher = new EventEmitter();
+    watcher.on('change', listener); // as fs.watch does
     watcher.closed = false;
     watcher.close = () => { watcher.closed = true; };
     watchers.push(watcher);
@@ -79,6 +80,39 @@ test('a watcher error reports a possible change once and watches again', async (
     watcher.close();
   }
   assert.equal(watchers[1].closed, true);
+});
+
+test('repeated watcher errors restart with a growing delay, not in a loop', async (t) => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'ev-watch-'));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  const { watch, watchers } = fakeWatch();
+  const watcher = watchFile(path.join(dir, 'doc.ev.html'), () => {}, { debounceMs: 20, retryMs: 40, watch });
+  try {
+    watchers[0].emit('error', new Error('boom'));
+    assert.equal(watchers.length, 2, 'the first error restarts at once');
+    watchers[1].emit('error', new Error('boom again'));
+    assert.equal(watchers.length, 2, 'a second error in a row waits');
+    await new Promise((r) => setTimeout(r, 60));
+    assert.equal(watchers.length, 3, 'restarted after the delay');
+    watchers[2].emit('change', 'change', 'other.txt'); // the new watcher works
+    watchers[2].emit('error', new Error('later'));
+    assert.equal(watchers.length, 4, 'a working watcher resets the delay');
+  } finally {
+    watcher.close();
+  }
+});
+
+test('a watcher error after close does nothing', async (t) => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'ev-watch-'));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  const { watch, watchers } = fakeWatch();
+  let calls = 0;
+  const watcher = watchFile(path.join(dir, 'doc.ev.html'), () => { calls++; }, { debounceMs: 20, watch });
+  watcher.close();
+  watchers[0].emit('error', new Error('late'));
+  await new Promise((r) => setTimeout(r, 60));
+  assert.equal(calls, 0, 'no change reported');
+  assert.equal(watchers.length, 1, 'no new watcher');
 });
 
 test('a watcher error on a missing folder reports once and stops watching', async () => {

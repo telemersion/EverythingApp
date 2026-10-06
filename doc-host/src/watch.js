@@ -24,12 +24,16 @@ function classifyChange(before, after) {
 // Calls onChange (debounced) whenever the file may have changed. Watches the
 // folder, because an atomic save replaces the file with a new one. A watcher
 // error also counts as a possible change; watching resumes if the folder is
-// still there (if not, the document reports its file as missing).
-function watchFile(filePath, onChange, { debounceMs = 200, watch = fs.watch } = {}) {
+// still there (if not, the document reports its file as missing). The first
+// error restarts at once; further errors in a row wait retryMs, doubling up
+// to a minute, until the new watcher reports an event.
+function watchFile(filePath, onChange, { debounceMs = 200, retryMs = 1000, watch = fs.watch } = {}) {
   const dir = path.dirname(filePath);
   const name = path.basename(filePath);
   let timer = null;
+  let retry = null;
   let watcher = null;
+  let failures = 0; // errors since the last event
   let closed = false;
 
   function changed() {
@@ -38,21 +42,31 @@ function watchFile(filePath, onChange, { debounceMs = 200, watch = fs.watch } = 
   }
 
   function start() {
-    watcher = watch(dir, (_event, file) => {
+    const current = watch(dir, (_event, file) => {
+      failures = 0;
       if (file && file.toString() !== name) return;
       changed();
     });
-    watcher.on('error', () => {
-      watcher.close();
-      watcher = null;
+    watcher = current;
+    current.on('error', () => {
+      current.close();
+      if (watcher === current) watcher = null;
+      if (closed) return;
       changed();
-      if (closed || !fs.existsSync(dir)) return;
-      try {
-        start();
-      } catch {
-        watcher = null; // folder vanished in between: stop watching
-      }
+      failures++;
+      if (failures === 1) restart();
+      else retry = setTimeout(restart, Math.min(retryMs * 2 ** (failures - 2), 60000));
     });
+  }
+
+  function restart() {
+    retry = null;
+    if (closed || !fs.existsSync(dir)) return;
+    try {
+      start();
+    } catch {
+      // folder vanished in between: stop watching
+    }
   }
 
   start();
@@ -60,6 +74,7 @@ function watchFile(filePath, onChange, { debounceMs = 200, watch = fs.watch } = 
     close() {
       closed = true;
       clearTimeout(timer);
+      clearTimeout(retry);
       if (watcher) watcher.close();
     },
   };
