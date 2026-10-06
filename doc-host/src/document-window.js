@@ -1,11 +1,17 @@
 'use strict';
 
+const fs = require('node:fs/promises');
 const path = require('node:path');
 const crypto = require('node:crypto');
-const { BaseWindow, WebContentsView, session, dialog } = require('electron');
+const { BaseWindow, WebContentsView, session, dialog, clipboard } = require('electron');
+const { checkDocument, formatReport } = require('./conformance');
+const { validateSnapshot } = require('./validate');
+const { writeDocument } = require('./write');
 const { serveDocument } = require('./protocol');
 const { hardenSession, hardenContents, WEB_PREFERENCES } = require('./security');
 const { originFor } = require('./urls');
+
+const SAVE_TIMEOUT_MS = 5000;
 
 // One open document: its window, its sandboxed view, its file on disk.
 // The main process owns the path; the document only ever sends data.
@@ -15,8 +21,16 @@ class DocumentWindow {
     this.name = path.basename(filePath);
     this.storeDir = storeDir;
     this.registry = registry;
-    this.html = html; // what the protocol handler serves
+
+    this.html = html;                       // what the protocol handler serves
+
+    this.latestChange = 0;                  // highest markDirty() counter seen
+    this.savedChange = 0;                   // counter covered by the last write
+    this.saving = null;
     this.prompting = false;
+    this.closeConfirmed = false;
+    this.pending = new Map();
+    this.requestSeq = 0;
 
     const id = crypto.randomBytes(16).toString('hex');
     this.origin = originFor(id);
@@ -34,12 +48,17 @@ class DocumentWindow {
     this.win.on('resize', () => this.layout());
     hardenContents(this.view.webContents);
 
+    this.win.on('close', (event) => this.onClose(event));
     this.win.on('closed', () => this.dispose());
     if (process.platform === 'darwin') this.win.setRepresentedFilename(filePath);
 
     registry.add(this);
     this.updateTitle();
     this.view.webContents.loadURL(`${this.origin}/`);
+  }
+
+  get isDirty() {
+    return this.latestChange > this.savedChange;
   }
 
   layout() {
@@ -54,20 +73,144 @@ class DocumentWindow {
 
   updateTitle() {
     if (this.win.isDestroyed()) return;
-    this.win.setTitle(this.name);
+    this.win.setTitle(`${this.isDirty ? '• ' : ''}${this.name}`);
+    if (process.platform === 'darwin') this.win.setDocumentEdited(this.isDirty);
   }
 
-  // IPC from the preload; saving follows in the next task.
-  onDirty() {}
+  // ---------- IPC from the preload ----------
 
-  onSaveData() {}
+  onDirty(counter) {
+    if (!Number.isSafeInteger(counter) || counter <= this.latestChange) return;
+    this.latestChange = counter;
+    this.updateTitle();
+  }
+
+  onSaveData(payload) {
+    if (!payload || typeof payload !== 'object') return;
+    const request = this.pending.get(payload.requestId);
+    if (!request) return;
+    this.pending.delete(payload.requestId);
+    clearTimeout(request.timer);
+    if (payload.error) request.reject(new Error(String(payload.error)));
+    else request.resolve({ json: payload.json, changes: Number(payload.changes) || 0 });
+  }
+
+  requestSnapshot() {
+    const requestId = ++this.requestSeq;
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.pending.delete(requestId);
+        reject(new Error('The document did not answer the save request.'));
+      }, SAVE_TIMEOUT_MS);
+      this.pending.set(requestId, { resolve, reject, timer });
+      this.view.webContents.send('doc:request-save', requestId);
+    });
+  }
+
+  rejectPending(reason) {
+    for (const { reject, timer } of this.pending.values()) {
+      clearTimeout(timer);
+      reject(reason);
+    }
+    this.pending.clear();
+  }
+
+  // ---------- Saving ----------
+
+  save() {
+    if (!this.saving) this.saving = this.doSave().finally(() => { this.saving = null; });
+    return this.saving;
+  }
+
+  async doSave() {
+    try {
+      const snapshot = await this.requestSnapshot();
+      const problem = validateSnapshot(snapshot.json);
+      if (problem) throw new Error(problem);
+      await writeDocument(this.filePath, snapshot.json, { storeDir: this.storeDir });
+      this.savedChange = Math.max(this.savedChange, snapshot.changes);
+      this.updateTitle();
+      return true;
+    } catch (err) {
+      await this.ask({
+        type: 'error',
+        message: `${this.name} could not be saved. The file on disk was not changed.`,
+        detail: err.message,
+        buttons: ['OK'],
+      });
+      return false;
+    }
+  }
+
+  async reloadFromDisk() {
+    let html;
+    try {
+      html = await fs.readFile(this.filePath, 'utf8');
+    } catch (err) {
+      await this.ask({ type: 'error', message: `${this.name} could not be read.`, detail: err.message, buttons: ['OK'] });
+      return false;
+    }
+    const check = checkDocument(html);
+    if (!check.ok) {
+      await this.showReport(check.errors, 'The file on disk no longer follows the document specification. The open version keeps running; saving is refused until the file is fixed.');
+      return false;
+    }
+    this.html = html;
+    this.latestChange = 0;
+    this.savedChange = 0;
+    this.rejectPending(new Error('The document was reloaded.'));
+    await this.view.webContents.loadURL(`${this.origin}/`);
+    this.updateTitle();
+    return true;
+  }
+
+  // View → Reload
+  async reloadInteractive() {
+    if (this.isDirty) {
+      const choice = await this.ask({
+        type: 'question',
+        message: `Reload ${this.name} and discard your unsaved changes?`,
+        buttons: ['Reload', 'Cancel'],
+        defaultId: 1,
+        cancelId: 1,
+      });
+      if (choice !== 0) return;
+    }
+    await this.reloadFromDisk();
+  }
+
+  // ---------- Closing ----------
+
+  onClose(event) {
+    if (this.closeConfirmed || !this.isDirty) return;
+    event.preventDefault();
+    this.confirmClose();
+  }
+
+  async confirmClose() {
+    const choice = await this.ask({
+      type: 'question',
+      message: `Do you want to save the changes you made to ${this.name}?`,
+      detail: "Your changes will be lost if you don't save them.",
+      buttons: ['Save', "Don't save", 'Cancel'],
+      defaultId: 0,
+      cancelId: 2,
+    });
+    if (choice === 2 || choice === null) return;
+    if (choice === 0 && !(await this.save())) return;
+    this.closeConfirmed = true;
+    this.win.close();
+  }
 
   dispose() {
+    this.rejectPending(new Error('The document was closed.'));
     this.registry.remove(this);
     if (!this.view.webContents.isDestroyed()) this.view.webContents.close();
     this.session.protocol.unhandle('ev-doc');
     this.session.clearStorageData().catch(() => {});
   }
+
+  // ---------- Dialogs ----------
 
   // One dialog at a time per document. Returns the button index, or null if
   // another dialog was already open.
@@ -80,6 +223,12 @@ class DocumentWindow {
     } finally {
       this.prompting = false;
     }
+  }
+
+  async showReport(errors, intro) {
+    const report = formatReport(this.filePath, errors);
+    const choice = await this.ask({ type: 'warning', message: intro, detail: report, buttons: ['Copy report', 'OK'], defaultId: 1 });
+    if (choice === 0) clipboard.writeText(report);
   }
 }
 

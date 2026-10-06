@@ -17,6 +17,7 @@ function buildMenu({ current, showOpenDialog, isDev }) {
       submenu: [
         { label: 'Open…', accelerator: 'CmdOrCtrl+O', click: () => showOpenDialog() },
         { type: 'separator' },
+        { label: 'Save', accelerator: 'CmdOrCtrl+S', click: withDoc((doc) => doc.save()) },
         { label: 'Close', accelerator: 'CmdOrCtrl+W', click: withDoc((doc) => doc.win.close()) },
         { type: 'separator' },
         { label: isMac ? 'Reveal in Finder' : 'Show in folder', click: withDoc((doc) => shell.showItemInFolder(doc.filePath)) },
@@ -27,6 +28,7 @@ function buildMenu({ current, showOpenDialog, isDev }) {
     {
       label: 'View',
       submenu: [
+        { label: 'Reload', accelerator: 'CmdOrCtrl+R', click: withDoc((doc) => doc.reloadInteractive()) },
         ...(isDev ? [{
           label: 'Developer Tools',
           accelerator: isMac ? 'Alt+Cmd+I' : 'Ctrl+Shift+I',
