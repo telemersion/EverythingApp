@@ -59,12 +59,13 @@ The file ends with a single line break after `</html>`.
 ## 3. Rules
 
 1. **Namespace.** Every name defined by this specification starts with `ev`: `ev-` for meta names and element ids, `ev` for JavaScript globals (`window.evHost`, `EvKit`). The script section must not define names with this prefix.
-2. **Self-contained.** No external scripts, stylesheets, fonts or images. Inline everything; embed assets as `data:` URIs. Inside the host, every network request is blocked.
+2. **Self-contained.** No external scripts, stylesheets, fonts or images. Inline everything; embed assets as `data:` URIs. Inside the host, every network request is blocked: no name lookups, no WebRTC, and every connection is refused.
 3. **Runtime UI.** The script section renders all UI into `#ev-app` at load time. `#ev-app` is empty in the saved file.
-4. **The host owns saving.** When `window.evHost` exists, the document shows no Save button and registers neither a Ctrl/Cmd+S handler nor `beforeunload`. The kit enforces this when you use it as described in section 5. *Why:* in Electron, a cancelled `beforeunload` silently stops the window from closing with no dialog, so a document that registers it would block the host's close prompt.
+4. **The host owns saving.** When `window.evHost` exists, the document shows no Save button and registers neither a Ctrl/Cmd+S handler nor `beforeunload`. The kit follows this on its side: it registers its own Ctrl/Cmd+S and `beforeunload` handlers only when `evHost` is absent. The document's own UI must follow it too: show a Save button and status line only when `doc.hosted` is `false` (section 5). *Why:* inside the host a Save button would do nothing (`save()` returns `false`), and the host ignores `beforeunload` (it cannot block closing). So this rule is about a consistent UI, not about safety.
 5. **UTF-8, LF only, no BOM.** *Why:* the HTML parser turns CRLF into LF inside `<style>` and `<script>`. The kit's fallback rebuilds the file from that parsed text, so a CRLF file would change bytes outside the data block on its first browser save.
 6. **No storage between sessions.** Inside the host, `localStorage`, IndexedDB and cookies start empty on every open. View state (filters, scroll position) lasts one session. Anything that should survive belongs in the data block.
-7. **No navigation, no new windows.** Links that navigate away, `window.open`, iframes and form submissions are blocked.
+7. **No navigation, no new windows.** Links that navigate away, `window.open` and form submissions are blocked. Iframes and frames cannot load anything (the content security policy refuses it) and, inside the host, receive no pointer input.
+8. **Files come in only through the user.** Inside the host, a document can receive files only through routes the user controls: a file picker (`<input type="file">`) and paste. It never sees file paths. Dropping files onto a document opens them in the host; the document never receives dropped files. Whatever a document imports lives in the data block (images as `data:` URIs). The data block is limited to 50 MB, and every save copies the whole file into the version store, so keep imports small.
 
 ## 4. The data block
 
@@ -106,7 +107,7 @@ doc.changed();                // call after every change to data
 | `save()` | Browser only: saves through the fallback and returns a promise of `true` (saved) or `false` (cancelled or failed). Inside the host it does nothing and returns `false`. |
 | `toHtml()` | The complete document text with the current data, exactly as a save would write it. |
 
-In a browser, the kit also saves on Ctrl/Cmd+S and warns before leaving the page with unsaved changes.
+In a browser, the kit also saves on Ctrl/Cmd+S and warns before leaving the page with unsaved changes. Inside the host it registers neither.
 
 ## 6. Host API v1 (`window.evHost`)
 
@@ -149,6 +150,8 @@ The host checks every file before opening it and refuses any file that breaks th
 | `data-json` | The data block is not valid JSON. |
 | `data-shape` | The data block is not a JSON object. |
 | `script-comment` | The script section contains `<!--`. |
+
+The host also refuses files larger than 60 MB, and data blocks larger than 50 MB are not saved.
 
 A file is treated as a document if and only if it contains `<meta name="ev-host-api"`, whatever its file name. Naming documents `<name>.ev.html` is recommended.
 

@@ -4027,4 +4027,6 @@ Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
 - Dialogs instead of banners for external changes (the host has no UI of its own until M2).
 - On macOS, Cmd+Q with a dirty document shows the close prompt but does not resume quitting after you answer; quit again.
 - Sessions of closed documents are cleared but stay registered in Electron until the app quits.
-- No file association, installers, auto-update or version-store clean-up (M3).
+- No file association, installers or auto-update (M3), and no clean-up of orphaned version stores of deleted or moved documents (M3).
+- The 60 MB file limit is checked only when opening. Reloads after external changes and the pre-write read do not check it, so a save can produce a file above 60 MB (escaping `<` grows the data) that the host then refuses to open.
+- The DNS block is app-wide (`host-resolver-rules`); M3 must add the update host as an exception.

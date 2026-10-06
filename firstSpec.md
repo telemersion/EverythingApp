@@ -74,6 +74,8 @@ v0.1 is delivered in three milestones. Each one is usable on its own; the code s
 - Auto-update via GitHub Releases and `electron-updater`: the host checks the update feed at startup and via Help → Check for updates, downloads new versions in the background and installs them on restart. The refusal for a newer API version offers the same check.
 - Version store clean-up at startup: each entry has a `meta.json` (absolute path, file name, `ev-doc-type`, data block hash, last seen). Parent folder missing (e.g. unmounted volume) → skip; file missing → mark orphaned; orphaned for 90 days → delete. A total size cap (e.g. 500 MB) removes the oldest orphans first, then the oldest versions of live documents, never a document's newest version.
 
+**M4 · Privileges** (v0.2, not part of v0.1): documents can request privileges beyond the sandbox, and the user can grant them. See the open question "Privileges requested by a document".
+
 Non-goals for v0.1, besides the skill that generates documents (defined once the specification is stable):
 
 - Template upgrade (regenerate behaviour, keep data).
@@ -81,8 +83,10 @@ Non-goals for v0.1, besides the skill that generates documents (defined once the
 - Attachments, multiple data blocks, network access, multi-user sync.
 - Linux packaging.
 - Re-linking the history of a moved document (match an orphaned store entry by file name, `ev-doc-type` and data block hash). `meta.json` already records what is needed.
+- "Save as…" and "Follow moved documents": when a document's file is moved or deleted, the host now only says so; later it can save the open data to a new file or follow the file to its new place.
+- Kit 1.1, fallback save UI: the document marks its Save button and status line (e.g. `data-ev-fallback`); the kit detects the host and hides them there, and wires them up in the browser, where the fallback needs them. Replaces the rule that the document itself decides from `doc.hosted`.
 - "Revert to version" in the host UI (v0.1: restore by copying from the version store manually).
-- Stashing unsaved local data across a reload, showing a diff against a changed data block on disk and suggesting a merge (later; v0.1 only offers keep mine / take disk / cancel).
+- Stashing unsaved local data across a reload, showing a diff against a changed data block on disk and suggesting a merge (later; v0.1 only offers keep mine / take disk / cancel). The merge step also offers "Save mine as a copy".
 
 ## Document specification
 
@@ -199,9 +203,12 @@ The main process owns all file access; it maps each window to exactly one file p
 6. **External change.** The host watches the open file and hashes each section on load and after every save. When the file changes on disk:
    - Behaviour changed, window clean → reload automatically.
    - Behaviour changed, window dirty → banner: "This document was updated. Save my data and reload / Reload and discard my changes / Later".
-   - Data block changed → never overwrite silently; the next save shows a conflict prompt: Keep mine / Take the version on disk / Cancel.
-7. **Close.** Closing a document that is dirty shows Save / Don't save / Cancel; Save triggers step 3 and closes only on success. Closing the window with several dirty documents shows a summary: Save all / Review each / Cancel. Ctrl/Cmd+S and File → Save always act on the active document.
-8. **Menu.** File: Open, Save, Close, Reveal in folder. View: Document list (show/hide), List / Thumbnails, Reload, Developer tools (dev builds only). Help: Check for updates.
+   - Data block changed → never overwrite silently; the next save shows a conflict prompt: Keep mine / Take the version on disk / Cancel. The write itself checks again that the data on disk is still what the host last saw; if it is not, the same prompt appears.
+   - File moved or deleted → the host says so ("moved or deleted"): changes exist only in the window, put the file back at its path and save again. The last saved version stays in the version store.
+   - Reload (View → Reload) with unsaved changes asks: Save and reload / Discard and reload / Cancel.
+7. **Close.** Closing a document that is dirty shows Save / Don't save / Cancel; Save triggers step 3. The window closes only when nothing is left unsaved: a failed save, or an edit made while saving, keeps it open. Save, close and reload run one at a time; close and reload wait for a running save. A save requested while another runs waits and then saves again with fresh data; if the running save fails or is cancelled, the waiting one is dropped. Closing the window with several dirty documents shows a summary: Save all / Review each / Cancel. Ctrl/Cmd+S and File → Save always act on the active document.
+8. **Unexpected errors.** Any failure not handled elsewhere (opening, checking the disk, closing, reloading) shows an error dialog with a "Copy report" button: file, action, message, stack trace, host and Electron version.
+9. **Menu.** File: Open, Save, Close, Reveal in folder. View: Document list (show/hide), List / Thumbnails, Reload, Developer tools (dev builds only). Help: Check for updates.
 
 Splicing the data block (main process, `doc-host/src/splice.js`):
 
@@ -246,7 +253,9 @@ Required settings and checks:
 - **No path from the page.** The path is resolved in the main process from `event.sender.id`. The API has no path parameter.
 - **No navigation.** Block `will-navigate` and `will-redirect`; deny `setWindowOpenHandler`; open no new windows.
 - **Custom protocol, closed by default.** Documents are served by the main process under `ev-doc://<random-id>/` (`protocol.handle`), a fresh random id per opened document. The handler answers exactly that one URL with the file content and a CSP header (`default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:; font-src data:`); every other request on the scheme returns 404. `file://`, `http(s)://` and all other schemes are blocked for document sessions. The document never learns its real path.
-- **Host network access.** The only network access in the whole host is auto-update, made by the main process (not by any document session) to one fixed update feed.
+- **Network.** M1 does no name resolution at all (`host-resolver-rules` maps every name to "not found"), so documents cannot leak data through DNS lookups such as dns-prefetch. WebRTC UDP is disabled, and every document session goes through a proxy that refuses every connection. M3 adds one exception for the update feed. The only network access in the whole host is auto-update, made by the main process (not by any document session) to one fixed update feed.
+- **No input to subframes.** The host injects a user style that gives iframes and frames no pointer input, so a file dropped onto one lands on the document itself, where the host opens it. A document never receives dropped files; it can import files only through a file picker or paste.
+- **Size limits.** Documents over 60 MB are refused on open; data blocks over 50 MB are not written. The 60 MB limit is checked only on open in M1.
 - **No permissions.** `setPermissionRequestHandler` denies camera, microphone, geolocation, notifications etc.
 - **Validate writes.** The host rejects `doc:save-data` with non-string input, invalid JSON and payloads over a size limit (e.g. 50 MB).
 - **Data, not code (permanent).** The Host API is data-only in every version. The host writes the data block on save and the kit on a user-confirmed kit update; it never writes the style or script section on behalf of a document. Kit text comes only from the host's own list of published kits, never from the document, so a document cannot rewrite any code through the API.
@@ -294,6 +303,7 @@ The idea has a solid lineage; TiddlyWiki with TiddlyDesktop is the closest worki
 - [ ] **Skill scope.** Should the skill only generate documents, or also inspect and repair documents that fail the conformance check (the host's copyable report is its natural input)? Note: the skill should target the API version of the user's installed host, so newer-API refusals stay rare.
 - [x] **File extension.** Resolved: any extension; a file is a document by content (the `ev-host-api` meta tag). `<name>.ev.html` is a recommended convention. The host is an opt-in handler for `.html` and passes non-documents to the default browser.
 - [x] **Self-modifying documents.** Resolved: never. A document cannot write its own behaviour through the Host API, in any API version. Behaviour changes come only from outside the document: an agent or the skill editing the file, or the host's own kit and template updates.
+- [ ] **Privileges requested by a document** *(target: M4, start of v0.2)*. A document has no privileges unless the user grants them. Design questions: where a request is declared (statically in the document, or at runtime); what a grant is bound to (path, document type, or a hash of the behaviour; an agent that rewrites the behaviour must not inherit a grant); where grants are stored and how the user revokes them (needs host UI, so after M2); how the browser fallback differs. First candidate privileges: drag-and-drop import into a document (in M1, dropped files and folders never reach a document), network to one fixed origin, direct host-to-host connection (shared editing). Already possible without a privilege, because the user controls them: importing through a file picker (`<input type="file">`) and paste.
 - [ ] **Agent connector.** A later host may expose an MCP server or connector so agents can edit an open document live through the host instead of on disk (the host would apply the edit, keep a version and reload the view, avoiding external-change conflicts). This is an agent-facing channel of the host, not part of the Host API documents see, so it does not conflict with the rule above. Scope, permissions and confirmation model to be defined.
 - [ ] **Trust indicator** *(team use)*. Deferred until documents travel between people. Likely first step: show the OS origin flag (macOS quarantine, Windows Mark-of-the-Web) as a banner on first open; document signatures later.
 - [x] **Concurrent edits.** Resolved: watch the file, react per section (see Host behaviour, step 6). Later: stash local data, show a diff, suggest a merge.
