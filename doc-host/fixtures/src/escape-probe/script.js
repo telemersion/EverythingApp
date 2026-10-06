@@ -101,6 +101,18 @@
   const pointerEvents = getComputedStyle(frame).pointerEvents;
   report('iframes receive no pointer input', pointerEvents === 'none', pointerEvents);
 
+  // An iframe inside a shadow root is covered too (user styles pierce shadow
+  // trees). A <frame> cannot be probed here: it needs a frameset as the
+  // document body, which would destroy this page. The selector
+  // "iframe, frame, frameset" covers it, as it does iframes.
+  const shadowHost = document.createElement('div');
+  const shadowFrame = document.createElement('iframe');
+  shadowHost.attachShadow({ mode: 'open' }).append(shadowFrame);
+  document.body.append(shadowHost);
+  shadowFrame.style.setProperty('pointer-events', 'auto', 'important');
+  const shadowPointer = getComputedStyle(shadowFrame).pointerEvents;
+  report('iframes in shadow roots receive no pointer input', shadowPointer === 'none', shadowPointer);
+
   const before = location.href;
   location.href = 'https://example.com/';
   await new Promise((resolve) => setTimeout(resolve, 1000));

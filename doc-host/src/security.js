@@ -30,13 +30,18 @@ function hardenSession(ses, origin) {
 
 // The preload does not run inside iframes, so file drops onto an iframe
 // would reach it. A user-origin !important rule beats any document rule:
-// iframes receive no pointer input, and drops land on the document itself.
-const NO_IFRAME_INPUT = 'iframe { pointer-events: none !important; }';
+// subframes (iframe, and frame/frameset after a document swaps in a
+// frameset) receive no pointer input, and drops land on the document itself.
+// preload.js inserts the same rule before any document script runs; it is
+// sandboxed and cannot require this module, so it keeps a copy (a test
+// checks that both are equal). Keep them in sync.
+const NO_IFRAME_INPUT = 'iframe, frame, frameset { pointer-events: none !important; }';
 
 // Locks down a document's web contents: no navigation, no new windows, no
 // webviews, no WebRTC traffic outside the (dead) proxy, no pointer input
 // into iframes, and a document cannot block closing with beforeunload.
 function hardenContents(wc) {
+  // Backstop: the preload inserts the rule earlier, on every load.
   wc.on('dom-ready', () => { // every load, including reloads
     wc.insertCSS(NO_IFRAME_INPUT, { cssOrigin: 'user' }).catch(() => {});
   });
@@ -58,4 +63,4 @@ const WEB_PREFERENCES = Object.freeze({
   spellcheck: false,
 });
 
-module.exports = { hardenSession, hardenContents, WEB_PREFERENCES };
+module.exports = { hardenSession, hardenContents, WEB_PREFERENCES, NO_IFRAME_INPUT };

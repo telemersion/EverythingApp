@@ -214,8 +214,12 @@ class DocumentWindow {
         });
         return false;
       }
-      // The data reached disk, but a reload replaced the page meanwhile: its
-      // counters and known state are the reload's, not ours.
+      // Defensive: a reload during a write is not reachable today
+      // (reloadFromDisk awaits saves; onDiskChange skips while saving). Were
+      // it to happen, the write above would have used the old known.data as
+      // expectedDataHash and raised EV_DATA_CONFLICT rather than overwrite;
+      // if it succeeded anyway, the page's counters and known state are the
+      // reload's, not ours.
       if (generation !== this.generation) return true;
       this.acceptOnDisk(written);
       this.diskDataChanged = false;

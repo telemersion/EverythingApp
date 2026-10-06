@@ -49,6 +49,8 @@ function watchFile(filePath, onChange, { debounceMs = 200, retryMs = 1000, watch
     });
     watcher = current;
     current.on('error', () => {
+      if (current.failed) return; // one restart per watcher
+      current.failed = true;
       current.close();
       if (watcher === current) watcher = null;
       if (closed) return;

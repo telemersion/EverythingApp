@@ -1,7 +1,18 @@
 'use strict';
 
 // Host API v1 (window.evHost). Runs sandboxed, in an isolated world.
-const { contextBridge, ipcRenderer, webUtils } = require('electron');
+const { contextBridge, ipcRenderer, webUtils, webFrame } = require('electron');
+
+// Subframes receive no pointer input (see the drop handling below). Inserted
+// here so it is in place before any document script runs; security.js inserts
+// it again on dom-ready as a backstop. Copy of NO_IFRAME_INPUT in
+// security.js (this sandboxed preload cannot require it): keep them equal.
+const NO_IFRAME_INPUT = 'iframe, frame, frameset { pointer-events: none !important; }';
+try {
+  webFrame.insertCSS(NO_IFRAME_INPUT, { cssOrigin: 'user' });
+} catch {
+  // the dom-ready insert in security.js still applies
+}
 
 let saveHandler = null;
 let changes = 0;
