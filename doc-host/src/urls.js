@@ -14,8 +14,11 @@ function isDocumentUrl(url, origin) {
 }
 
 // Requests a document session may make at all. Everything else is cancelled.
-function isAllowedRequest(url, origin) {
-  return url.startsWith(`${origin}/`) || url.startsWith('data:') || url.startsWith('blob:');
+// allowDevTools (dev builds only) lets the DevTools front end load; it is
+// the devtools:// scheme only, never network.
+function isAllowedRequest(url, origin, { allowDevTools = false } = {}) {
+  return url.startsWith(`${origin}/`) || url.startsWith('data:') || url.startsWith('blob:')
+    || (allowDevTools && url.startsWith('devtools://'));
 }
 
 module.exports = { SCHEME, originFor, isDocumentUrl, isAllowedRequest };

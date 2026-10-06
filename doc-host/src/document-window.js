@@ -18,7 +18,7 @@ const SAVE_TIMEOUT_MS = 5000;
 // One open document: its window, its sandboxed view, its file on disk.
 // The main process owns the path; the document only ever sends data.
 class DocumentWindow {
-  constructor({ filePath, html, parts, storeDir, registry }) {
+  constructor({ filePath, html, parts, storeDir, registry, allowDevTools = false }) {
     this.filePath = filePath;
     this.name = path.basename(filePath);
     this.storeDir = storeDir;
@@ -47,7 +47,10 @@ class DocumentWindow {
     const id = crypto.randomBytes(16).toString('hex');
     this.origin = originFor(id);
     this.session = session.fromPartition(`ev-doc-${id}`); // no "persist:" = in memory
-    const hardened = hardenSession(this.session, this.origin);
+    const hardened = hardenSession(this.session, this.origin, {
+      allowDevTools,
+      documentWebContentsId: () => this.webContentsId,
+    });
     serveDocument(this.session, this.origin, () => this.html);
 
     this.win = new BaseWindow({ width: 1100, height: 800, title: this.name });

@@ -10,7 +10,7 @@ const MAX_FILE_BYTES = 60 * 1024 * 1024;
 
 // Opens a file in the host: refuses anything that is not a conforming
 // document, focuses the window if the document is already open.
-async function openPath(rawPath, { registry, storeDir }) {
+async function openPath(rawPath, { registry, storeDir, allowDevTools = false }) {
   let filePath;
   let bytes;
   try {
@@ -53,7 +53,7 @@ async function openPath(rawPath, { registry, storeDir }) {
     return null;
   }
 
-  const doc = new DocumentWindow({ filePath, html: check.text, parts: check.parts, storeDir, registry });
+  const doc = new DocumentWindow({ filePath, html: check.text, parts: check.parts, storeDir, registry, allowDevTools });
   await doc.ready;
   return doc;
 }

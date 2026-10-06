@@ -17,12 +17,17 @@ const DEAD_PROXY = Object.freeze({
 // Locks down a document's (in-memory) session: no permissions, no
 // downloads, no requests outside the document's own origin, no network
 // beyond a proxy that refuses everything. Resolves once the proxy is set.
-function hardenSession(ses, origin) {
+// allowDevTools (dev builds only) lets the DevTools front end, which loads in
+// this session, open. Requests from the document's own web contents never get
+// that exception; documentWebContentsId() is read per request because the
+// web contents is created after the session.
+function hardenSession(ses, origin, { allowDevTools = false, documentWebContentsId = () => undefined } = {}) {
   ses.setPermissionRequestHandler((_wc, _permission, callback) => callback(false));
   ses.setPermissionCheckHandler(() => false);
   ses.setDevicePermissionHandler(() => false);
   ses.webRequest.onBeforeRequest({ urls: ['<all_urls>'] }, (details, callback) => {
-    callback({ cancel: !isAllowedRequest(details.url, origin) });
+    const devTools = allowDevTools && details.webContentsId !== documentWebContentsId();
+    callback({ cancel: !isAllowedRequest(details.url, origin, { allowDevTools: devTools }) });
   });
   ses.on('will-download', (event) => event.preventDefault());
   return ses.setProxy(DEAD_PROXY);

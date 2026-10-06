@@ -23,7 +23,7 @@ if (!app.requestSingleInstanceLock()) {
   const registry = new Registry();
   const storeDir = () => path.join(app.getPath('userData'), 'versions');
   // Every open route (dialog, Finder, second instance, argv, drop) ends here.
-  const open = (p) => openPath(p, { registry, storeDir: storeDir() }).then((doc) => {
+  const open = (p) => openPath(p, { registry, storeDir: storeDir(), allowDevTools: !app.isPackaged }).then((doc) => {
     if (doc && process.env.EV_PROBE) attachProbe(doc);
     return doc;
   }).catch((err) => showError({ action: 'open', filePath: p, err }));
