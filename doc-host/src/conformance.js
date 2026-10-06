@@ -57,7 +57,7 @@ function checkDocument(html) {
   }
 
   // Keep checking a normalised copy, so one BOM or CRLF problem does not hide the rest.
-  const text = html.replace(/^﻿/, '').replace(/\r\n?/g, '\n');
+  const text = html.replace(/^\ufeff/, '').replace(/\r\n?/g, '\n');
   const frame = parseDocument(text);
   if (!frame.ok) {
     errors.push(problem('frame',

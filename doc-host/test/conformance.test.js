@@ -35,7 +35,7 @@ test('isDocument looks for the ev-host-api meta tag only', () => {
 // the declared API version must be 1 for the document to reach that check
 // and kit 1.0.0 belongs to API v1. Add a case when a second API version ships.
 const INVALID = [
-  ['bom', () => '﻿' + makeDocument()],
+  ['bom', () => '\ufeff' + makeDocument()],
   ['line-endings', () => makeDocument().replace(/\n/g, '\r\n')],
   ['api-missing', () => makeDocument().replace('<meta name="ev-host-api" content="1">', '')],
   ['api-invalid', () => makeDocument({ api: 'one' })],
