@@ -455,7 +455,7 @@ class DocumentWindow {
   }
 
   async showReport(errors, intro) {
-    const report = formatReport(this.filePath, errors);
+    const report = formatReport(this.filePath, errors, { context: 'open-document' });
     const choice = await this.ask({ type: 'warning', message: intro, detail: report, buttons: ['Copy report', 'OK'], defaultId: 1 });
     if (choice === 0) clipboard.writeText(report);
   }

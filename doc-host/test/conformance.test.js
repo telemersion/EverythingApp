@@ -117,3 +117,13 @@ test('formatReport lists every problem and mentions Chrome', () => {
   assert.match(report, /- \[data-json\] Bad JSON\./);
   assert.match(report, /open the file in Chrome/);
 });
+
+test('formatReport heading names the situation', () => {
+  const errors = [{ code: 'frame', message: 'Broken.' }];
+  assert.match(formatReport('/tmp/a.ev.html', errors, { context: 'open-document' }).split('\n')[0],
+    /^a\.ev\.html no longer follows the document specification\.$/);
+  assert.match(formatReport('/tmp/a.ev.html', errors, { context: 'assemble' }).split('\n')[0],
+    /^a\.ev\.html was not written\.$/);
+  assert.doesNotMatch(formatReport('/tmp/a.ev.html', errors, { context: 'open-document' }), /could not open/);
+  assert.throws(() => formatReport('/tmp/a.ev.html', errors, { context: 'nope' }), /Unknown report context/);
+});

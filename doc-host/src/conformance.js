@@ -122,9 +122,19 @@ function checkDocument(input) {
 }
 
 // The text shown in the refusal dialog and copied by "Copy report".
-function formatReport(filePath, errors) {
+// context: 'open' (refused on open), 'open-document' (the file of an open
+// document no longer conforms) or 'assemble' (tools/assemble.js refused).
+const REPORT_HEADINGS = {
+  open: (name) => `EverythingApp could not open ${name}.`,
+  'open-document': (name) => `${name} no longer follows the document specification.`,
+  assemble: (name) => `${name} was not written.`,
+};
+
+function formatReport(filePath, errors, { context = 'open' } = {}) {
+  const heading = REPORT_HEADINGS[context];
+  if (!heading) throw new Error(`Unknown report context: ${context}`);
   const lines = [
-    `EverythingApp could not open ${path.basename(filePath)}.`,
+    heading(path.basename(filePath)),
     `File: ${filePath}`,
     '',
     'The file does not follow the EverythingApp document specification:',

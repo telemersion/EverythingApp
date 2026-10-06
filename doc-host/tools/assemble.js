@@ -35,7 +35,7 @@ const html = buildDocument({
 
 const check = checkDocument(html);
 if (!check.ok) {
-  console.error(formatReport(outFile, check.errors));
+  console.error(formatReport(outFile, check.errors, { context: 'assemble' }));
   process.exit(1);
 }
 fs.writeFileSync(outFile, html, 'utf8');
