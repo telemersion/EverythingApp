@@ -12,6 +12,9 @@ const { attachProbe } = require('./probe');
 const { showError } = require('./errors');
 
 app.setName('EverythingApp');
+// No DNS at all: M1 needs none, and documents could leak data through DNS
+// names (dns-prefetch). M3 adds "EXCLUDE <update host>" for the update check.
+app.commandLine.appendSwitch('host-resolver-rules', 'MAP * ~NOTFOUND');
 registerSchemePrivileges();
 
 if (!app.requestSingleInstanceLock()) {

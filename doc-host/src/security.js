@@ -3,9 +3,11 @@
 const { isAllowedRequest } = require('./urls');
 
 // Every document session goes through this proxy. Nothing listens on the
-// discard port, so any connection that bypasses webRequest (DNS prefetch,
-// preconnect, WebRTC over TCP) fails. ev-doc:// is served in-process and
-// never reaches the proxy. "<-loopback>" also sends localhost to it.
+// discard port, so any connection that bypasses webRequest (preconnect,
+// WebRTC over TCP) fails. ev-doc:// is served in-process and never reaches
+// the proxy. "<-loopback>" also sends localhost to it. The proxy does not
+// stop DNS lookups (dns-prefetch); main.js turns off name resolution for the
+// whole app instead (host-resolver-rules).
 const DEAD_PROXY = Object.freeze({
   mode: 'fixed_servers',
   proxyRules: 'http://127.0.0.1:9',
