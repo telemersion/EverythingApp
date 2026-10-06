@@ -47,3 +47,48 @@ test('watchFile reports a replaced file once, debounced, and ignores siblings', 
     watcher.close();
   }
 });
+
+// A stand-in for fs.watch whose watchers can be made to fail on demand.
+function fakeWatch() {
+  const { EventEmitter } = require('node:events');
+  const watchers = [];
+  const watch = () => {
+    const watcher = new EventEmitter();
+    watcher.closed = false;
+    watcher.close = () => { watcher.closed = true; };
+    watchers.push(watcher);
+    return watcher;
+  };
+  return { watch, watchers };
+}
+
+test('a watcher error reports a possible change once and watches again', async (t) => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'ev-watch-'));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  const { watch, watchers } = fakeWatch();
+  let calls = 0;
+  const watcher = watchFile(path.join(dir, 'doc.ev.html'), () => { calls++; }, { debounceMs: 20, watch });
+  try {
+    watchers[0].emit('error', new Error('boom'));
+    assert.equal(watchers[0].closed, true, 'the dead watcher is closed');
+    assert.equal(watchers.length, 2, 'the folder still exists: a new watcher started');
+    assert.equal(calls, 0, 'debounced');
+    await new Promise((r) => setTimeout(r, 60));
+    assert.equal(calls, 1);
+  } finally {
+    watcher.close();
+  }
+  assert.equal(watchers[1].closed, true);
+});
+
+test('a watcher error on a missing folder reports once and stops watching', async () => {
+  const { watch, watchers } = fakeWatch();
+  let calls = 0;
+  const missing = path.join(os.tmpdir(), `ev-watch-missing-${process.pid}-${Date.now()}`, 'doc.ev.html');
+  const watcher = watchFile(missing, () => { calls++; }, { debounceMs: 20, watch });
+  watchers[0].emit('error', new Error('gone'));
+  assert.equal(watchers.length, 1, 'no new watcher');
+  await new Promise((r) => setTimeout(r, 60));
+  assert.equal(calls, 1);
+  watcher.close();
+});

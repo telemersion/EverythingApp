@@ -107,6 +107,16 @@ async function run(dir) {
   assert.equal(doc.diskDataChanged, true);
   doc.ask = realAsk;
 
+  step('a moved file is reported once, not written again');
+  const shown = [];
+  doc.ask = async (options) => { shown.push(options.message); return 0; }; // Keep mine, then OK
+  await fs.rename(filePath, `${filePath}.moved`);
+  assert.equal(await doc.save(), false);
+  await wait(500); // the watcher sees the rename too
+  assert.deepEqual(shown, ['The data in hours.ev.html was changed on disk since you opened it.', 'hours.ev.html was moved or deleted.']);
+  await assert.rejects(fs.access(filePath), 'the file was not recreated');
+  doc.ask = realAsk;
+
   step('all checks passed');
 }
 

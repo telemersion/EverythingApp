@@ -22,20 +22,45 @@ function classifyChange(before, after) {
 }
 
 // Calls onChange (debounced) whenever the file may have changed. Watches the
-// folder, because an atomic save replaces the file with a new one.
-function watchFile(filePath, onChange, { debounceMs = 200 } = {}) {
+// folder, because an atomic save replaces the file with a new one. A watcher
+// error also counts as a possible change; watching resumes if the folder is
+// still there (if not, the document reports its file as missing).
+function watchFile(filePath, onChange, { debounceMs = 200, watch = fs.watch } = {}) {
+  const dir = path.dirname(filePath);
   const name = path.basename(filePath);
   let timer = null;
-  const watcher = fs.watch(path.dirname(filePath), (_event, changed) => {
-    if (changed && changed.toString() !== name) return;
+  let watcher = null;
+  let closed = false;
+
+  function changed() {
     clearTimeout(timer);
     timer = setTimeout(onChange, debounceMs);
-  });
-  watcher.on('error', () => {});
+  }
+
+  function start() {
+    watcher = watch(dir, (_event, file) => {
+      if (file && file.toString() !== name) return;
+      changed();
+    });
+    watcher.on('error', () => {
+      watcher.close();
+      watcher = null;
+      changed();
+      if (closed || !fs.existsSync(dir)) return;
+      try {
+        start();
+      } catch {
+        watcher = null; // folder vanished in between: stop watching
+      }
+    });
+  }
+
+  start();
   return {
     close() {
+      closed = true;
       clearTimeout(timer);
-      watcher.close();
+      if (watcher) watcher.close();
     },
   };
 }

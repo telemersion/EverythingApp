@@ -31,6 +31,7 @@ class DocumentWindow {
     this.latestChange = 0;                  // highest markDirty() counter seen
     this.savedChange = 0;                   // counter covered by the last write
     this.diskDataChanged = false;
+    this.missingReported = false;           // "moved or deleted" shown for this disappearance
     this.saving = null;
     this.prompting = false;
     this.closeConfirmed = false;
@@ -154,6 +155,7 @@ class DocumentWindow {
           { storeDir: this.storeDir, expectedDataHash: this.known.data });
         this.acceptOnDisk(written);
         this.diskDataChanged = false;
+        this.missingReported = false;
         this.savedChange = Math.max(this.savedChange, snapshot.changes);
         this.updateTitle();
         // Saving spliced our data into newer behaviour from disk: show it.
@@ -165,6 +167,10 @@ class DocumentWindow {
         if (err.code === 'EV_DATA_CONFLICT' && await this.refreshKnown()) {
           this.diskDataChanged = true;
           continue;
+        }
+        if (err.code === 'ENOENT' && await this.isMissing()) {
+          await this.reportMissing();
+          return false;
         }
         await this.ask({
           type: 'error',
@@ -244,9 +250,12 @@ class DocumentWindow {
     let html;
     try {
       html = await fs.readFile(this.filePath, 'utf8');
-    } catch {
-      return; // gone for now (moved, or mid-replace); nothing to compare
+    } catch (err) {
+      if (err.code !== 'ENOENT') throw err;
+      if (!this.missingReported) await this.reportMissing();
+      return;
     }
+    this.missingReported = false;
     if (sha256(html) === this.knownFileHash) return;
     this.knownFileHash = sha256(html);
 
@@ -278,6 +287,27 @@ class DocumentWindow {
     });
     if (choice === 0) await this.save();
     else if (choice === 1) await this.reloadFromDisk();
+  }
+
+  async isMissing() {
+    try {
+      await fs.access(this.filePath);
+      return false;
+    } catch (err) {
+      return err.code === 'ENOENT';
+    }
+  }
+
+  // Every failed save shows this; the watcher shows it once per disappearance.
+  async reportMissing() {
+    this.missingReported = true;
+    await this.ask({
+      type: 'warning',
+      message: `${this.name} was moved or deleted.`,
+      detail: `Your changes exist only in this window. Put the file back at ${this.filePath} and save again. ` +
+        'The last saved version is in the version store.',
+      buttons: ['OK'],
+    });
   }
 
   // ---------- Closing ----------
