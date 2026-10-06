@@ -1,0 +1,471 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hours sheet</title>
+<style>
+  :root {
+    --paper: #f6f7f3;
+    --card: #ffffff;
+    --ink: #1d2a2c;
+    --muted: #66767a;
+    --rule: #d8ddd6;
+    --accent: #0f5c63;
+    --accent-ink: #ffffff;
+    --warn: #a35a00;
+    --danger: #a3262a;
+    --focus: #1b8a94;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper: #121819;
+      --card: #1a2123;
+      --ink: #e4ebe9;
+      --muted: #8d9fa3;
+      --rule: #2d3a3d;
+      --accent: #4fb3bd;
+      --accent-ink: #0c1a1c;
+      --warn: #e0a252;
+      --danger: #e5787b;
+      --focus: #4fb3bd;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    padding: 28px 20px 80px;
+  }
+  main { max-width: 1040px; margin: 0 auto; }
+
+  header {
+    display: flex; flex-wrap: wrap; align-items: baseline;
+    justify-content: space-between; gap: 12px 24px; margin-bottom: 18px;
+  }
+  h1 { font-size: 26px; font-weight: 650; letter-spacing: -0.01em; margin: 0; }
+  #status { color: var(--muted); font-size: 13px; }
+  #status.dirty { color: var(--warn); font-weight: 600; }
+
+  .bar {
+    display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: end;
+    margin-bottom: 14px;
+  }
+  .bar label { display: grid; gap: 3px; font-size: 12px; color: var(--muted); }
+  .bar .spacer { flex: 1; }
+
+  button, select, input {
+    font: inherit; color: inherit;
+  }
+  select, input[type="month"] {
+    background: var(--card); border: 1px solid var(--rule); border-radius: 6px;
+    padding: 6px 8px; min-height: 34px;
+  }
+  button {
+    background: var(--card); border: 1px solid var(--rule); border-radius: 6px;
+    padding: 6px 14px; min-height: 34px; cursor: pointer;
+  }
+  button:hover { border-color: var(--accent); }
+  button.primary {
+    background: var(--accent); border-color: var(--accent); color: var(--accent-ink);
+    font-weight: 600;
+  }
+  button.primary:hover { filter: brightness(1.08); }
+  :focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+
+  .sheet {
+    background: var(--card); border: 1px solid var(--rule); border-radius: 8px;
+    overflow-x: auto;
+  }
+  table { border-collapse: collapse; width: 100%; min-width: 760px; }
+  th {
+    text-align: left; font-weight: 600; font-size: 13px; color: var(--muted);
+    padding: 10px 10px; border-bottom: 2px solid var(--rule); white-space: nowrap;
+  }
+  td { padding: 0; border-bottom: 1px solid var(--rule); }
+  tbody tr:last-child td { border-bottom: 0; }
+  tbody tr:hover { background: color-mix(in srgb, var(--accent) 5%, transparent); }
+  td input {
+    width: 100%; border: 0; background: transparent; padding: 9px 10px;
+    border-radius: 0; min-height: 40px;
+  }
+  td input:focus { outline: 2px solid var(--focus); outline-offset: -2px; background: var(--card); }
+  th.num, td.num input { text-align: right; font-variant-numeric: tabular-nums; }
+  .c-date { width: 140px; }
+  .c-person { width: 150px; }
+  .c-task { width: 24%; }
+  .c-hours { width: 90px; }
+  .c-del { width: 44px; }
+  td.del { text-align: center; }
+  td.del button {
+    border: 0; background: transparent; color: var(--muted); padding: 4px 10px; font-size: 18px;
+    line-height: 1; min-height: 0;
+  }
+  td.del button:hover { color: var(--danger); }
+
+  tfoot td {
+    padding: 11px 10px; border-top: 2px solid var(--rule); border-bottom: 0;
+    font-weight: 650;
+  }
+  tfoot td.num { text-align: right; font-variant-numeric: tabular-nums; }
+
+  .empty { padding: 28px 16px; text-align: center; color: var(--muted); }
+
+  #people { display: flex; flex-wrap: wrap; gap: 8px 22px; margin-top: 16px; font-size: 14px; }
+  #people span { color: var(--muted); }
+  #people b { color: var(--ink); font-variant-numeric: tabular-nums; margin-left: 4px; }
+
+  .hint { margin-top: 28px; color: var(--muted); font-size: 13px; max-width: 70ch; }
+  kbd {
+    border: 1px solid var(--rule); border-radius: 4px; padding: 0 5px; font: inherit; font-size: 12px;
+  }
+</style>
+</head>
+<body>
+<div id="app"></div>
+
+<script type="application/json" id="data">{"rows":[]}</script>
+
+<script>
+(function () {
+  'use strict';
+
+  // ---------- Load data embedded in this file ----------
+  const data = JSON.parse(document.getElementById('data').textContent);
+  data.rows = Array.isArray(data.rows) ? data.rows : [];
+
+  let dirty = false;
+  let fileHandle = null;
+
+  const todayStr = () => {
+    const d = new Date();
+    return new Date(d - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+  };
+
+  // ---------- Build the UI (only exists at runtime, never saved) ----------
+  const app = document.getElementById('app');
+  app.innerHTML = `
+    <main>
+      <header>
+        <h1>Hours sheet</h1>
+        <span id="status">Saved</span>
+      </header>
+
+      <div class="bar">
+        <button id="add" class="primary">Add row</button>
+        <label>Person
+          <select id="fPerson"><option value="">All</option></select>
+        </label>
+        <label>Month
+          <input type="month" id="fMonth">
+        </label>
+        <button id="clearFilter" title="Show all rows">Clear filter</button>
+        <span class="spacer"></span>
+        <button id="sort">Sort by date</button>
+        <button id="save" class="primary">Save</button>
+      </div>
+
+      <div class="sheet">
+        <table>
+          <thead>
+            <tr>
+              <th class="c-date">Date</th>
+              <th class="c-person">Person</th>
+              <th class="c-task">Task</th>
+              <th class="c-hours num">Hours</th>
+              <th>Note</th>
+              <th class="c-del"></th>
+            </tr>
+          </thead>
+          <tbody id="rows"></tbody>
+          <tfoot>
+            <tr>
+              <td colspan="3">Total</td>
+              <td class="num" id="total">0</td>
+              <td colspan="2" id="count" style="font-weight:400;color:var(--muted)"></td>
+            </tr>
+          </tfoot>
+        </table>
+        <div class="empty" id="empty" hidden>No entries yet. Use “Add row” to log the first work session.</div>
+      </div>
+
+      <div id="people"></div>
+
+      <p class="hint">
+        Save with <kbd>Ctrl</kbd>+<kbd>S</kbd> (or <kbd>Cmd</kbd>+<kbd>S</kbd>). In Chrome and Edge, pick this file once
+        and it is remembered; later saves overwrite it with the updated data (the browser may ask once per
+        session to allow editing). In other browsers a new copy of
+        this page is downloaded; replace the old file with it.
+      </p>
+    </main>
+    <datalist id="persons"></datalist>
+    <datalist id="tasks"></datalist>
+  `;
+
+  const $ = (id) => document.getElementById(id);
+  const tbody = $('rows');
+
+  // ---------- Helpers ----------
+  const fmt = (n) => (Math.round(n * 100) / 100).toLocaleString('en-US', { maximumFractionDigits: 2 });
+
+  function setDirty(v) {
+    dirty = v;
+    const s = $('status');
+    s.textContent = v ? 'Unsaved changes' : 'Saved';
+    s.classList.toggle('dirty', v);
+  }
+
+  function unique(field) {
+    return [...new Set(data.rows.map(r => (r[field] || '').trim()).filter(Boolean))]
+      .sort((a, b) => a.localeCompare(b));
+  }
+
+  function fillDatalist(id, values) {
+    const dl = $(id);
+    dl.innerHTML = '';
+    values.forEach(v => { const o = document.createElement('option'); o.value = v; dl.append(o); });
+  }
+
+  function refreshLists() {
+    const persons = unique('person');
+    fillDatalist('persons', persons);
+    fillDatalist('tasks', unique('task'));
+    const sel = $('fPerson');
+    const current = sel.value;
+    sel.innerHTML = '<option value="">All</option>';
+    persons.forEach(p => { const o = document.createElement('option'); o.value = p; o.textContent = p; sel.append(o); });
+    sel.value = persons.includes(current) ? current : '';
+  }
+
+  function isVisible(r) {
+    const p = $('fPerson').value, m = $('fMonth').value;
+    if (p && (r.person || '').trim() !== p) return false;
+    if (m && !(r.date || '').startsWith(m)) return false;
+    return true;
+  }
+
+  function applyFilterAndTotals() {
+    let total = 0, shown = 0;
+    const byPerson = new Map();
+    const trs = tbody.children;
+    for (let i = 0; i < trs.length; i++) {
+      const r = data.rows[i];
+      const vis = isVisible(r);
+      trs[i].hidden = !vis;
+      if (vis) {
+        shown++;
+        const h = Number(r.hours) || 0;
+        total += h;
+        const key = (r.person || '').trim() || '(no person)';
+        byPerson.set(key, (byPerson.get(key) || 0) + h);
+      }
+    }
+    $('total').textContent = fmt(total);
+    $('count').textContent = shown + (shown === 1 ? ' entry' : ' entries');
+    $('empty').hidden = data.rows.length > 0;
+
+    const box = $('people');
+    box.innerHTML = '';
+    [...byPerson.entries()].sort((a, b) => a[0].localeCompare(b[0])).forEach(([name, h]) => {
+      const s = document.createElement('span');
+      s.textContent = name;
+      const b = document.createElement('b');
+      b.textContent = fmt(h) + ' h';
+      s.append(b);
+      box.append(s);
+    });
+  }
+
+  // ---------- Rows ----------
+  function cell(cls, input) {
+    const td = document.createElement('td');
+    if (cls) td.className = cls;
+    td.append(input);
+    return td;
+  }
+
+  function field(row, key, type, extra = {}) {
+    const i = document.createElement('input');
+    i.type = type;
+    i.setAttribute('aria-label', key);
+    Object.entries(extra).forEach(([k, v]) => i.setAttribute(k, v));
+    i.value = key === 'hours' ? (row.hours || '') : (row[key] || '');
+    i.addEventListener('input', () => {
+      row[key] = key === 'hours' ? (parseFloat(i.value.replace(',', '.')) || 0) : i.value;
+      setDirty(true);
+      applyFilterAndTotals();
+    });
+    if (key === 'person' || key === 'task') i.addEventListener('change', refreshLists);
+    return i;
+  }
+
+  function makeRow(row) {
+    const tr = document.createElement('tr');
+    tr.append(
+      cell('', field(row, 'date', 'date')),
+      cell('', field(row, 'person', 'text', { list: 'persons', autocomplete: 'off' })),
+      cell('', field(row, 'task', 'text', { list: 'tasks', autocomplete: 'off' })),
+      cell('num', field(row, 'hours', 'text', { inputmode: 'decimal', placeholder: '0' })),
+      cell('', field(row, 'note', 'text'))
+    );
+    const del = document.createElement('td');
+    del.className = 'del';
+    const b = document.createElement('button');
+    b.textContent = '×';
+    b.title = 'Delete row';
+    b.setAttribute('aria-label', 'Delete row');
+    b.addEventListener('click', () => {
+      const idx = data.rows.indexOf(row);
+      if (idx < 0) return;
+      data.rows.splice(idx, 1);
+      tr.remove();
+      setDirty(true);
+      refreshLists();
+      applyFilterAndTotals();
+    });
+    del.append(b);
+    tr.append(del);
+    return tr;
+  }
+
+  function renderAll() {
+    tbody.innerHTML = '';
+    data.rows.forEach(r => tbody.append(makeRow(r)));
+    refreshLists();
+    applyFilterAndTotals();
+  }
+
+  $('add').addEventListener('click', () => {
+    const last = data.rows[data.rows.length - 1];
+    const row = {
+      date: $('fMonth').value ? ($('fMonth').value + '-01') : todayStr(),
+      person: $('fPerson').value || (last ? last.person : '') || '',
+      task: '', hours: 0, note: ''
+    };
+    if ($('fMonth').value && todayStr().startsWith($('fMonth').value)) row.date = todayStr();
+    data.rows.push(row);
+    const tr = makeRow(row);
+    tbody.append(tr);
+    setDirty(true);
+    applyFilterAndTotals();
+    const target = row.person ? tr.querySelector('td:nth-child(3) input') : tr.querySelector('td:nth-child(2) input');
+    target.focus();
+  });
+
+  $('sort').addEventListener('click', () => {
+    data.rows.sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+    setDirty(true);
+    renderAll();
+  });
+
+  $('fPerson').addEventListener('change', applyFilterAndTotals);
+  $('fMonth').addEventListener('input', applyFilterAndTotals);
+  $('clearFilter').addEventListener('click', () => {
+    $('fPerson').value = ''; $('fMonth').value = '';
+    applyFilterAndTotals();
+  });
+
+  // ---------- Save: write a new copy of this page with the current data ----------
+  function buildHtml() {
+    const clone = document.documentElement.cloneNode(true);
+    clone.querySelector('#data').textContent = JSON.stringify(data).replace(/</g, '\\u003c');
+    clone.querySelector('#app').innerHTML = '';
+    clone.querySelectorAll('datalist').forEach(n => n.remove());
+    return '<!DOCTYPE html>\n' + clone.outerHTML;
+  }
+
+  // Remember the chosen file across page reloads (Chromium only).
+  // The handle is stored in IndexedDB, keyed by this page's address.
+  const DB_NAME = 'hours-sheet-handles', STORE = 'handles';
+
+  function openDb() {
+    return new Promise((resolve, reject) => {
+      const req = indexedDB.open(DB_NAME, 1);
+      req.onupgradeneeded = () => req.result.createObjectStore(STORE);
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+  }
+
+  async function loadStoredHandle() {
+    try {
+      const db = await openDb();
+      return await new Promise((resolve, reject) => {
+        const q = db.transaction(STORE).objectStore(STORE).get(location.href);
+        q.onsuccess = () => resolve(q.result || null);
+        q.onerror = () => reject(q.error);
+      });
+    } catch (e) { return null; }
+  }
+
+  async function storeHandle(handle) {
+    try {
+      const db = await openDb();
+      await new Promise((resolve, reject) => {
+        const tx = db.transaction(STORE, 'readwrite');
+        tx.objectStore(STORE).put(handle, location.href);
+        tx.oncomplete = resolve;
+        tx.onerror = () => reject(tx.error);
+      });
+    } catch (e) { /* not critical: the picker simply appears again next time */ }
+  }
+
+  const handleReady = window.showSaveFilePicker
+    ? loadStoredHandle().then(h => { if (h && !fileHandle) fileHandle = h; })
+    : Promise.resolve();
+
+  async function save() {
+    const html = buildHtml();
+    try {
+      if (window.showSaveFilePicker) {
+        await handleReady;
+
+        // Reuse the remembered file if we still have (or can get) write permission.
+        if (fileHandle) {
+          let perm = await fileHandle.queryPermission({ mode: 'readwrite' });
+          if (perm !== 'granted') perm = await fileHandle.requestPermission({ mode: 'readwrite' });
+          if (perm !== 'granted') fileHandle = null;
+        }
+
+        if (!fileHandle) {
+          fileHandle = await window.showSaveFilePicker({
+            suggestedName: (location.pathname.split('/').pop() || 'hours-sheet.html'),
+            types: [{ description: 'HTML page', accept: { 'text/html': ['.html'] } }]
+          });
+          await storeHandle(fileHandle);
+        }
+        const w = await fileHandle.createWritable();
+        await w.write(html);
+        await w.close();
+      } else {
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(new Blob([html], { type: 'text/html' }));
+        a.download = 'hours-sheet.html';
+        document.body.append(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+      }
+      setDirty(false);
+    } catch (err) {
+      if (err && err.name === 'AbortError') return;   // user closed the picker
+      fileHandle = null;
+      alert('Saving failed: ' + (err && err.message ? err.message : err));
+    }
+  }
+
+  $('save').addEventListener('click', save);
+  document.addEventListener('keydown', (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') { e.preventDefault(); save(); }
+  });
+  window.addEventListener('beforeunload', (e) => {
+    if (dirty) { e.preventDefault(); e.returnValue = ''; }
+  });
+
+  renderAll();
+})();
+</script>
+
+
+</body></html>
