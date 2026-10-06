@@ -22,9 +22,11 @@ app.on('window-all-closed', () => {});
 
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+// A condition that throws or rejects (e.g. executeJavaScript while the page
+// reloads) counts as not yet true.
 async function until(label, condition, timeoutMs = 5000) {
   const start = Date.now();
-  while (!(await condition())) {
+  while (!(await Promise.resolve().then(condition).catch(() => false))) {
     if (Date.now() - start > timeoutMs) throw new Error(`Timed out waiting for: ${label}`);
     await wait(50);
   }
@@ -144,6 +146,25 @@ async function run(dir) {
   doc.requestSnapshot = takeSnapshot;
   doc.ask = realAsk;
   assert.equal(doc.generation, generation, 'the page was not reloaded');
+  assert.equal(doc.isDirty, true);
+
+  step('a failed write leaves the original intact and shows an error');
+  const versionCount = async () => (await fs.readdir(path.join(storeDir, entry))).filter((n) => n.endsWith('.html')).length;
+  const beforeFailure = await fs.readFile(filePath, 'utf8');
+  const versionsBeforeFailure = await versionCount();
+  const errors = [];
+  doc.ask = async (options) => { errors.push(options); return 0; };
+  await fs.chmod(filePath, 0o444);
+  try {
+    assert.equal(await doc.save(), false);
+  } finally {
+    await fs.chmod(filePath, 0o644);
+    doc.ask = realAsk;
+  }
+  assert.equal(await fs.readFile(filePath, 'utf8'), beforeFailure, 'the original is unchanged');
+  assert.equal(await versionCount(), versionsBeforeFailure, 'no version was stored');
+  assert.deepEqual(errors.map((o) => [o.type, o.message, o.detail]),
+    [['error', 'hours.ev.html could not be saved. The file on disk was not changed.', 'The file is read-only.']]);
   assert.equal(doc.isDirty, true);
 
   step('a moved file is reported once, not written again');

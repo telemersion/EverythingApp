@@ -291,12 +291,18 @@ body { font: 14px/1.5 system-ui, sans-serif; margin: 24px; }
   localStorage.setItem('probe', 'set');
 
   await blockedFetch('fetch https', 'https://example.com/');
+  // Names never resolve inside the host, so name-based attempts can fail at
+  // the lookup and hide the layers behind it. The IP literals skip the
+  // lookup: this fetch is stopped by the content security policy, the STUN
+  // attempt by IP address below by the WebRTC policy.
+  await blockedFetch('fetch https by IP address', 'https://1.1.1.1/');
   await blockedFetch('fetch file://', 'file:///etc/hosts');
   await blockedFetch('fetch own origin', location.origin + '/other.html');
   await blockedImage('image from https', 'https://www.google.com/favicon.ico');
   await blockedImage('image from file://', 'file:///System/Library/CoreServices/Finder.app/Contents/Resources/Finder.icns');
 
   await noIceToServer('WebRTC reaches no STUN server', 'stun:stun.l.google.com:19302');
+  await noIceToServer('WebRTC reaches no STUN server by IP address', 'stun:162.159.207.0:3478');
 
   const opened = window.open('https://example.com/');
   report('window.open', !opened);
