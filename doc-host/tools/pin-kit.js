@@ -4,7 +4,7 @@
 // Adds the kit file's hash to kit/published.json. Run once per kit version.
 const fs = require('node:fs');
 const path = require('node:path');
-const { sha256: hashText } = require('../src/write');
+const { sha256: hashText } = require('../src/hash');
 
 const [version, api] = process.argv.slice(2);
 if (!/^\d+\.\d+\.\d+$/.test(version || '') || !/^[1-9]\d*$/.test(api || '')) {

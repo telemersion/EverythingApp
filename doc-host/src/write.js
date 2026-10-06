@@ -2,16 +2,13 @@
 
 const fs = require('node:fs/promises');
 const path = require('node:path');
-const crypto = require('node:crypto');
+const { checkDocument } = require('./conformance');
+const { sha256 } = require('./hash');
 const { splice } = require('./splice');
 
 const KEEP_LATEST = 20;
 const KEEP_DAYS = 30;
 const DAY_MS = 24 * 60 * 60 * 1000;
-
-function sha256(text) {
-  return crypto.createHash('sha256').update(text, 'utf8').digest('hex');
-}
 
 // One folder per document in the version store, keyed by its absolute path.
 function pathKey(filePath) {
@@ -73,8 +70,6 @@ async function exists(p) {
 // 4. write <name>.tmp next to it, flush, and rename it over the original.
 // Any error leaves the original untouched. Returns the new file content.
 async function writeDocument(filePath, json, { storeDir, now = new Date() }) {
-  // Loaded here because conformance -> kit requires sha256 from this module.
-  const { checkDocument } = require('./conformance');
   const current = await fs.readFile(filePath, 'utf8');
   const check = checkDocument(current);
   if (!check.ok) {

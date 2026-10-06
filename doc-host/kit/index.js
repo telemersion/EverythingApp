@@ -2,7 +2,7 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
-const { sha256 } = require('../src/write');
+const { sha256 } = require('../src/hash');
 
 // Published kits never change. published.json pins each kit file's hash;
 // loading fails loudly if a published kit file was edited.
