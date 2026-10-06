@@ -29,20 +29,29 @@ contextBridge.exposeInMainWorld('evHost', {
   markDirty: () => ipcRenderer.send('doc:dirty', ++changes),
 });
 
-// Files dropped onto a document open in the host. Only real drops from the
-// user count (isTrusted); the document never sees the paths.
+// Files dropped onto a document open in the host. The preload's capture
+// listeners are registered before any document script, so they run first and
+// stop file drags completely: the document never sees dropped files, neither
+// paths nor contents (not even dataTransfer.items during dragover). Only real
+// drops from the user (isTrusted) open anything. Limit: this preload does not
+// run inside iframes the document creates (about:blank, srcdoc), so a drop
+// onto such a frame is not intercepted here.
 function hasFiles(event) {
   return !!event.dataTransfer && Array.from(event.dataTransfer.types).includes('Files');
 }
 
-window.addEventListener('dragover', (event) => {
-  if (hasFiles(event)) event.preventDefault();
-}, true);
+for (const type of ['dragenter', 'dragover']) {
+  window.addEventListener(type, (event) => {
+    if (!event.isTrusted || !hasFiles(event)) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+  }, true);
+}
 
 window.addEventListener('drop', (event) => {
   if (!event.isTrusted || !hasFiles(event)) return;
   event.preventDefault();
-  event.stopPropagation();
+  event.stopImmediatePropagation();
   const paths = Array.from(event.dataTransfer.files)
     .map((file) => webUtils.getPathForFile(file))
     .filter(Boolean);
