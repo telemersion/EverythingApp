@@ -239,7 +239,7 @@ Why not a DOM clone: anything the script changes at runtime (body classes, injec
 
 Constraint this imposes: the parser normalises CRLF to LF inside sections, so documents use LF line endings only (checked on open).
 
-Known limits: `fetch` of sibling files is blocked on `file://`; the stored handle breaks when the file moves; clearing site data forgets it.
+Known limits: `fetch` of sibling files is blocked on `file://`; the stored handle breaks when the file moves; clearing site data forgets it. The first save dialog cannot start in the document's own folder (a page does not know where its file is; Chrome opens Downloads), so the user must find the original file there, or the save lands in a new copy (observed in the M1 manual check; a candidate for the kit 1.1 fallback save UI).
 
 ## Security model
 
