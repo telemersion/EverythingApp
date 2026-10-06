@@ -29,6 +29,7 @@
 | **Host API** | The small, versioned interface the host exposes to a running document. | Bridge, SDK |
 | **Fallback** | The way a document saves itself when no host is present. | Browser mode, offline mode |
 | **Conformance check** | The host's validation of a file against the document specification when it is opened. | Validation, lint |
+| **Privilege** | A capability beyond the sandbox (e.g. import by drop, network to one origin) that a document may request and only the User can grant; designed in a later milestone. | Permission (when meaning the document-level concept), capability, right |
 
 ## People and tooling
 
@@ -46,6 +47,7 @@
 - A **Document** declares exactly one **Document type** and one **Host API** version.
 - The **Host** opens a **Document** only after it passes the **Conformance check**.
 - A **Document** uses the **Fallback** only when no **Host** is present.
+- A **Document** has no **Privileges** unless the **User** grants them; the **Host** never grants one on its own.
 - The **Skill** produces **Documents** that conform to the **Document specification**.
 - **EverythingApp** consists of exactly one **Host**, one **Document specification** and one **Skill**.
 - A **Document** "works with **EverythingApp**" exactly when it conforms to the **Document specification**.

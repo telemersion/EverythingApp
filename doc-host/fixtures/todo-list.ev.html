@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="ev-host-api" content="1">
+  <meta name="ev-doc-type" content="todo-list" data-version="1.0">
+  <title>To-do list</title>
+  <style id="ev-style">
+:root {
+  --paper: #faf8f4;
+  --card: #ffffff;
+  --ink: #2a2622;
+  --muted: #7a7168;
+  --rule: #e2ddd5;
+  --accent: #8a4b1c;
+  --accent-ink: #ffffff;
+  --warn: #a35a00;
+  --focus: #c0712f;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper: #1a1715;
+    --card: #23201d;
+    --ink: #ece6df;
+    --muted: #a39a90;
+    --rule: #3a342f;
+    --accent: #e09a5f;
+    --accent-ink: #1a1715;
+    --warn: #e0a252;
+    --focus: #e09a5f;
+  }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body {
+  background: var(--paper);
+  color: var(--ink);
+  font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  padding: 28px 16px 60px;
+}
+main { max-width: 560px; margin: 0 auto; }
+
+header { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; margin-bottom: 16px; }
+h1 { font-size: 26px; font-weight: 650; margin: 0; }
+#status { color: var(--muted); font-size: 13px; }
+#status.dirty { color: var(--warn); font-weight: 600; }
+
+form { display: flex; gap: 8px; margin-bottom: 14px; }
+input, button { font: inherit; color: inherit; }
+#text {
+  flex: 1; min-width: 0; background: var(--card); border: 1px solid var(--rule);
+  border-radius: 6px; padding: 6px 10px; min-height: 36px;
+}
+button {
+  background: var(--card); border: 1px solid var(--rule); border-radius: 6px;
+  padding: 6px 14px; min-height: 36px; cursor: pointer;
+}
+button:hover { border-color: var(--accent); }
+button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 600; }
+:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+
+ul { list-style: none; margin: 0; padding: 0; background: var(--card); border: 1px solid var(--rule); border-radius: 8px; }
+ul:empty { display: none; }
+li { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-bottom: 1px solid var(--rule); }
+li:last-child { border-bottom: 0; }
+li span { flex: 1; overflow-wrap: anywhere; }
+li.done span { color: var(--muted); text-decoration: line-through; }
+li input { width: 18px; height: 18px; accent-color: var(--accent); }
+li button { border: 0; background: transparent; color: var(--muted); font-size: 18px; line-height: 1; min-height: 0; padding: 2px 8px; }
+
+#empty, #count { color: var(--muted); font-size: 13px; }
+</style>
+</head>
+<body>
+  <div id="ev-app"></div>
+  <script type="application/json" id="ev-data">{"items":[]}</script>
+  <script id="ev-kit" data-kit-version="1.0.0">
+/* EverythingApp kit 1.0.0 (host API v1). Part of the document frame:
+   the host checks this exact text by hash. Do not edit it in a document. */
+(function () {
+  'use strict';
+
+  var KIT_VERSION = '1.0.0';
+  var kitText = document.currentScript.textContent;
+  var styleText = document.getElementById('ev-style').textContent;
+  var docTypeMeta = document.querySelector('meta[name="ev-doc-type"]');
+  var frame = {
+    lang: document.documentElement.getAttribute('lang'),
+    api: document.querySelector('meta[name="ev-host-api"]').getAttribute('content'),
+    docType: docTypeMeta.getAttribute('content'),
+    docTypeVersion: docTypeMeta.getAttribute('data-version'),
+    title: document.querySelector('head > title').textContent
+  };
+  var initialized = false;
+
+  function escapeJson(json) {
+    return json.replace(/</g, '\\u003c');
+  }
+
+  // Must produce exactly the frame of doc-host/src/frame.js.
+  function buildDocument(p) {
+    return '<!DOCTYPE html>\n<html lang="' + p.lang + '">\n<head>\n' +
+      '  <meta charset="utf-8">\n' +
+      '  <meta name="ev-host-api" content="' + p.api + '">\n' +
+      '  <meta name="ev-doc-type" content="' + p.docType + '" data-version="' + p.docTypeVersion + '">\n' +
+      '  <title>' + p.title + '</title>\n' +
+      '  <style id="ev-style">' + p.style + '</style>\n' +
+      '</head>\n<body>\n' +
+      '  <div id="ev-app"></div>\n' +
+      '  <script type="application/json" id="ev-data">' + p.data + '<\/script>\n' +
+      '  <script id="ev-kit" data-kit-version="' + p.kitVersion + '">' + p.kit + '<\/script>\n' +
+      '  <script id="ev-script">' + p.script + '<\/script>\n' +
+      '</body>\n</html>\n';
+  }
+
+  // ---------- Browser fallback: save a new copy of this file ----------
+
+  var DB_NAME = 'ev-kit-handles';
+  var STORE = 'handles';
+  var fileHandle = null;
+
+  function openDb() {
+    return new Promise(function (resolve, reject) {
+      var req = indexedDB.open(DB_NAME, 1);
+      req.onupgradeneeded = function () { req.result.createObjectStore(STORE); };
+      req.onsuccess = function () { resolve(req.result); };
+      req.onerror = function () { reject(req.error); };
+    });
+  }
+
+  function loadHandle() {
+    return openDb().then(function (db) {
+      return new Promise(function (resolve, reject) {
+        var q = db.transaction(STORE).objectStore(STORE).get(location.href);
+        q.onsuccess = function () { resolve(q.result || null); };
+        q.onerror = function () { reject(q.error); };
+      });
+    }).catch(function () { return null; });
+  }
+
+  function storeHandle(handle) {
+    return openDb().then(function (db) {
+      return new Promise(function (resolve, reject) {
+        var tx = db.transaction(STORE, 'readwrite');
+        tx.objectStore(STORE).put(handle, location.href);
+        tx.oncomplete = resolve;
+        tx.onerror = function () { reject(tx.error); };
+      });
+    }).catch(function () { /* not critical: the picker appears again next time */ });
+  }
+
+  function suggestedName() {
+    var last = decodeURIComponent(location.pathname.split('/').pop() || '');
+    return last || frame.docType + '.ev.html';
+  }
+
+  async function writeWithPicker(html) {
+    if (!fileHandle) fileHandle = await loadHandle();
+    if (fileHandle) {
+      var perm = await fileHandle.queryPermission({ mode: 'readwrite' });
+      if (perm !== 'granted') perm = await fileHandle.requestPermission({ mode: 'readwrite' });
+      if (perm !== 'granted') fileHandle = null;
+    }
+    if (!fileHandle) {
+      fileHandle = await window.showSaveFilePicker({
+        suggestedName: suggestedName(),
+        types: [{ description: 'EverythingApp document', accept: { 'text/html': ['.html'] } }]
+      });
+      await storeHandle(fileHandle);
+    }
+    var w = await fileHandle.createWritable();
+    await w.write(html);
+    await w.close();
+  }
+
+  function download(html) {
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([html], { type: 'text/html' }));
+    a.download = suggestedName();
+    document.body.append(a);
+    a.click();
+    a.remove();
+    setTimeout(function () { URL.revokeObjectURL(a.href); }, 1000);
+  }
+
+  async function fallbackSave(html) {
+    try {
+      if (window.showSaveFilePicker) await writeWithPicker(html);
+      else download(html);
+      return true;
+    } catch (err) {
+      if (err && err.name === 'AbortError') return false;
+      fileHandle = null;
+      alert('Saving failed: ' + (err && err.message ? err.message : err));
+      return false;
+    }
+  }
+
+  // ---------- Public interface ----------
+
+  function init(options) {
+    if (initialized) throw new Error('EvKit.init() may only be called once.');
+    initialized = true;
+    options = options || {};
+
+    var scriptEl = document.getElementById('ev-script');
+    var scriptText = scriptEl ? scriptEl.textContent : '';
+    var data = JSON.parse(document.getElementById('ev-data').textContent || '{}');
+    if (data === null || typeof data !== 'object' || Array.isArray(data)) data = {};
+    var getData = typeof options.getData === 'function' ? options.getData : function () { return data; };
+    var onDirtyChange = typeof options.onDirtyChange === 'function' ? options.onDirtyChange : function () {};
+    var host = window.evHost && window.evHost.version >= 1 ? window.evHost : null;
+    var dirty = false;
+
+    function serialize() {
+      return JSON.stringify(getData());
+    }
+
+    function toHtml() {
+      return buildDocument({
+        lang: frame.lang, api: frame.api, docType: frame.docType,
+        docTypeVersion: frame.docTypeVersion, title: frame.title,
+        style: styleText, data: escapeJson(serialize()),
+        kitVersion: KIT_VERSION, kit: kitText, script: scriptText
+      });
+    }
+
+    function setDirty(value) {
+      if (dirty === value) return;
+      dirty = value;
+      onDirtyChange(value);
+    }
+
+    function save() {
+      if (host) return Promise.resolve(false);
+      return fallbackSave(toHtml()).then(function (ok) {
+        if (ok) setDirty(false);
+        return ok;
+      });
+    }
+
+    if (host) {
+      // The host owns saving, the dirty marker and the close prompt.
+      host.onSaveRequest(serialize);
+    } else {
+      window.addEventListener('keydown', function (e) {
+        if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
+          e.preventDefault();
+          save();
+        }
+      });
+      window.addEventListener('beforeunload', function (e) {
+        if (dirty) { e.preventDefault(); e.returnValue = ''; }
+      });
+    }
+
+    return Object.freeze({
+      data: data,
+      hosted: !!host,
+      changed: function () {
+        if (host) host.markDirty();
+        else setDirty(true);
+      },
+      save: save,
+      toHtml: toHtml
+    });
+  }
+
+  Object.defineProperty(window, 'EvKit', {
+    value: Object.freeze({ version: KIT_VERSION, init: init }),
+    writable: false,
+    configurable: false
+  });
+})();
+</script>
+  <script id="ev-script">
+// To-do list: one entry per item, ticked off when done.
+// Data shape: {"items":[{"text":"","done":false}]}
+(function () {
+  'use strict';
+
+  const doc = EvKit.init({ onDirtyChange: (dirty) => showStatus(dirty) });
+  const data = doc.data;
+  data.items = Array.isArray(data.items) ? data.items : [];
+
+  // In the host, the host owns saving: no Save button and no status line.
+  const app = document.getElementById('ev-app');
+  app.innerHTML = `
+    <main>
+      <header>
+        <h1>To-do list</h1>
+        ${doc.hosted ? '' : '<span id="status">Saved</span>'}
+      </header>
+      <form id="new">
+        <input id="text" type="text" placeholder="New item" aria-label="New item" autocomplete="off">
+        <button id="add" class="primary">Add</button>
+        ${doc.hosted ? '' : '<button id="save" type="button">Save</button>'}
+      </form>
+      <ul id="items"></ul>
+      <p id="empty" hidden>Nothing to do yet.</p>
+      <p id="count"></p>
+    </main>
+  `;
+
+  const $ = (id) => document.getElementById(id);
+
+  function showStatus(dirty) {
+    const s = $('status');
+    if (!s) return;
+    s.textContent = dirty ? 'Unsaved changes' : 'Saved';
+    s.classList.toggle('dirty', dirty);
+  }
+
+  function showCount() {
+    const open = data.items.filter((item) => !item.done).length;
+    $('empty').hidden = data.items.length > 0;
+    $('count').textContent = data.items.length ? `${open} of ${data.items.length} open` : '';
+  }
+
+  function update() {
+    showCount();
+    doc.changed();
+  }
+
+  function makeItem(item) {
+    const li = document.createElement('li');
+    const box = document.createElement('input');
+    box.type = 'checkbox';
+    box.checked = !!item.done;
+    box.setAttribute('aria-label', 'Done');
+    box.addEventListener('change', () => {
+      item.done = box.checked;
+      li.classList.toggle('done', item.done);
+      update();
+    });
+    const text = document.createElement('span');
+    text.textContent = item.text;
+    const del = document.createElement('button');
+    del.textContent = '×';
+    del.title = 'Delete item';
+    del.setAttribute('aria-label', 'Delete item');
+    del.addEventListener('click', () => {
+      data.items.splice(data.items.indexOf(item), 1);
+      li.remove();
+      update();
+    });
+    li.classList.toggle('done', !!item.done);
+    li.append(box, text, del);
+    return li;
+  }
+
+  // The form is never submitted (rule 7); Enter and the Add button add an item.
+  $('new').addEventListener('submit', (event) => {
+    event.preventDefault();
+    const value = $('text').value.trim();
+    if (!value) return;
+    const item = { text: value, done: false };
+    data.items.push(item);
+    $('items').append(makeItem(item));
+    $('text').value = '';
+    update();
+  });
+
+  if (!doc.hosted) $('save').addEventListener('click', () => doc.save());
+
+  data.items.forEach((item) => $('items').append(makeItem(item)));
+  showCount();
+})();
+</script>
+</body>
+</html>

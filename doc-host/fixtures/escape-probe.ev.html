@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="ev-host-api" content="1">
+  <meta name="ev-doc-type" content="escape-probe" data-version="1.0">
+  <title>Escape probe</title>
+  <style id="ev-style">
+body { font: 14px/1.5 system-ui, sans-serif; margin: 24px; }
+.pass { color: #0a7d32; }
+.fail { color: #b3261e; font-weight: 600; }
+</style>
+</head>
+<body>
+  <div id="ev-app"></div>
+  <script type="application/json" id="ev-data">{"runs":0}</script>
+  <script id="ev-kit" data-kit-version="1.0.0">
+/* EverythingApp kit 1.0.0 (host API v1). Part of the document frame:
+   the host checks this exact text by hash. Do not edit it in a document. */
+(function () {
+  'use strict';
+
+  var KIT_VERSION = '1.0.0';
+  var kitText = document.currentScript.textContent;
+  var styleText = document.getElementById('ev-style').textContent;
+  var docTypeMeta = document.querySelector('meta[name="ev-doc-type"]');
+  var frame = {
+    lang: document.documentElement.getAttribute('lang'),
+    api: document.querySelector('meta[name="ev-host-api"]').getAttribute('content'),
+    docType: docTypeMeta.getAttribute('content'),
+    docTypeVersion: docTypeMeta.getAttribute('data-version'),
+    title: document.querySelector('head > title').textContent
+  };
+  var initialized = false;
+
+  function escapeJson(json) {
+    return json.replace(/</g, '\\u003c');
+  }
+
+  // Must produce exactly the frame of doc-host/src/frame.js.
+  function buildDocument(p) {
+    return '<!DOCTYPE html>\n<html lang="' + p.lang + '">\n<head>\n' +
+      '  <meta charset="utf-8">\n' +
+      '  <meta name="ev-host-api" content="' + p.api + '">\n' +
+      '  <meta name="ev-doc-type" content="' + p.docType + '" data-version="' + p.docTypeVersion + '">\n' +
+      '  <title>' + p.title + '</title>\n' +
+      '  <style id="ev-style">' + p.style + '</style>\n' +
+      '</head>\n<body>\n' +
+      '  <div id="ev-app"></div>\n' +
+      '  <script type="application/json" id="ev-data">' + p.data + '<\/script>\n' +
+      '  <script id="ev-kit" data-kit-version="' + p.kitVersion + '">' + p.kit + '<\/script>\n' +
+      '  <script id="ev-script">' + p.script + '<\/script>\n' +
+      '</body>\n</html>\n';
+  }
+
+  // ---------- Browser fallback: save a new copy of this file ----------
+
+  var DB_NAME = 'ev-kit-handles';
+  var STORE = 'handles';
+  var fileHandle = null;
+
+  function openDb() {
+    return new Promise(function (resolve, reject) {
+      var req = indexedDB.open(DB_NAME, 1);
+      req.onupgradeneeded = function () { req.result.createObjectStore(STORE); };
+      req.onsuccess = function () { resolve(req.result); };
+      req.onerror = function () { reject(req.error); };
+    });
+  }
+
+  function loadHandle() {
+    return openDb().then(function (db) {
+      return new Promise(function (resolve, reject) {
+        var q = db.transaction(STORE).objectStore(STORE).get(location.href);
+        q.onsuccess = function () { resolve(q.result || null); };
+        q.onerror = function () { reject(q.error); };
+      });
+    }).catch(function () { return null; });
+  }
+
+  function storeHandle(handle) {
+    return openDb().then(function (db) {
+      return new Promise(function (resolve, reject) {
+        var tx = db.transaction(STORE, 'readwrite');
+        tx.objectStore(STORE).put(handle, location.href);
+        tx.oncomplete = resolve;
+        tx.onerror = function () { reject(tx.error); };
+      });
+    }).catch(function () { /* not critical: the picker appears again next time */ });
+  }
+
+  function suggestedName() {
+    var last = decodeURIComponent(location.pathname.split('/').pop() || '');
+    return last || frame.docType + '.ev.html';
+  }
+
+  async function writeWithPicker(html) {
+    if (!fileHandle) fileHandle = await loadHandle();
+    if (fileHandle) {
+      var perm = await fileHandle.queryPermission({ mode: 'readwrite' });
+      if (perm !== 'granted') perm = await fileHandle.requestPermission({ mode: 'readwrite' });
+      if (perm !== 'granted') fileHandle = null;
+    }
+    if (!fileHandle) {
+      fileHandle = await window.showSaveFilePicker({
+        suggestedName: suggestedName(),
+        types: [{ description: 'EverythingApp document', accept: { 'text/html': ['.html'] } }]
+      });
+      await storeHandle(fileHandle);
+    }
+    var w = await fileHandle.createWritable();
+    await w.write(html);
+    await w.close();
+  }
+
+  function download(html) {
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([html], { type: 'text/html' }));
+    a.download = suggestedName();
+    document.body.append(a);
+    a.click();
+    a.remove();
+    setTimeout(function () { URL.revokeObjectURL(a.href); }, 1000);
+  }
+
+  async function fallbackSave(html) {
+    try {
+      if (window.showSaveFilePicker) await writeWithPicker(html);
+      else download(html);
+      return true;
+    } catch (err) {
+      if (err && err.name === 'AbortError') return false;
+      fileHandle = null;
+      alert('Saving failed: ' + (err && err.message ? err.message : err));
+      return false;
+    }
+  }
+
+  // ---------- Public interface ----------
+
+  function init(options) {
+    if (initialized) throw new Error('EvKit.init() may only be called once.');
+    initialized = true;
+    options = options || {};
+
+    var scriptEl = document.getElementById('ev-script');
+    var scriptText = scriptEl ? scriptEl.textContent : '';
+    var data = JSON.parse(document.getElementById('ev-data').textContent || '{}');
+    if (data === null || typeof data !== 'object' || Array.isArray(data)) data = {};
+    var getData = typeof options.getData === 'function' ? options.getData : function () { return data; };
+    var onDirtyChange = typeof options.onDirtyChange === 'function' ? options.onDirtyChange : function () {};
+    var host = window.evHost && window.evHost.version >= 1 ? window.evHost : null;
+    var dirty = false;
+
+    function serialize() {
+      return JSON.stringify(getData());
+    }
+
+    function toHtml() {
+      return buildDocument({
+        lang: frame.lang, api: frame.api, docType: frame.docType,
+        docTypeVersion: frame.docTypeVersion, title: frame.title,
+        style: styleText, data: escapeJson(serialize()),
+        kitVersion: KIT_VERSION, kit: kitText, script: scriptText
+      });
+    }
+
+    function setDirty(value) {
+      if (dirty === value) return;
+      dirty = value;
+      onDirtyChange(value);
+    }
+
+    function save() {
+      if (host) return Promise.resolve(false);
+      return fallbackSave(toHtml()).then(function (ok) {
+        if (ok) setDirty(false);
+        return ok;
+      });
+    }
+
+    if (host) {
+      // The host owns saving, the dirty marker and the close prompt.
+      host.onSaveRequest(serialize);
+    } else {
+      window.addEventListener('keydown', function (e) {
+        if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
+          e.preventDefault();
+          save();
+        }
+      });
+      window.addEventListener('beforeunload', function (e) {
+        if (dirty) { e.preventDefault(); e.returnValue = ''; }
+      });
+    }
+
+    return Object.freeze({
+      data: data,
+      hosted: !!host,
+      changed: function () {
+        if (host) host.markDirty();
+        else setDirty(true);
+      },
+      save: save,
+      toHtml: toHtml
+    });
+  }
+
+  Object.defineProperty(window, 'EvKit', {
+    value: Object.freeze({ version: KIT_VERSION, init: init }),
+    writable: false,
+    configurable: false
+  });
+})();
+</script>
+  <script id="ev-script">
+// Escape probe: tries everything a document must not be able to do and
+// reports each attempt as PASS (blocked) or FAIL (possible). Run it with
+// `npm run probe`; the host prints the results and exits 1 on any FAIL.
+// Data shape: {"runs":0}
+(async function () {
+  'use strict';
+
+  const doc = EvKit.init();
+  const list = document.createElement('ul');
+  document.getElementById('ev-app').append(list);
+
+  function report(name, pass, detail) {
+    const line = `[probe] ${pass ? 'PASS' : 'FAIL'} ${name}${detail ? ' (' + detail + ')' : ''}`;
+    const li = document.createElement('li');
+    li.className = pass ? 'pass' : 'fail';
+    li.textContent = line;
+    list.append(li);
+    console.log(line);
+  }
+
+  async function blockedFetch(name, url) {
+    try {
+      await fetch(url);
+      report(name, false, 'request succeeded');
+    } catch {
+      report(name, true);
+    }
+  }
+
+  function blockedImage(name, url) {
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.onload = () => { report(name, false, 'image loaded'); resolve(); };
+      img.onerror = () => { report(name, true); resolve(); };
+      img.src = url;
+    });
+  }
+
+  // PASS when ICE gathering finds no server-reflexive or relay candidate,
+  // i.e. the STUN server was never reached.
+  async function noIceToServer(name, stunUrl) {
+    let pc;
+    try {
+      pc = new RTCPeerConnection({ iceServers: [{ urls: stunUrl }] });
+    } catch (err) {
+      report(name, true, 'RTCPeerConnection unavailable');
+      return;
+    }
+    const types = [];
+    pc.onicecandidate = (e) => {
+      if (e.candidate) types.push(e.candidate.type || (/ typ (\w+)/.exec(e.candidate.candidate) || [])[1]);
+    };
+    const complete = new Promise((resolve) => {
+      pc.onicegatheringstatechange = () => { if (pc.iceGatheringState === 'complete') resolve(); };
+    });
+    try {
+      pc.createDataChannel('probe');
+      await pc.setLocalDescription(await pc.createOffer());
+    } catch (err) {
+      pc.close();
+      report(name, false, 'could not start ICE gathering: ' + (err && err.message));
+      return;
+    }
+    await Promise.race([complete, new Promise((resolve) => setTimeout(resolve, 3000))]);
+    pc.close();
+    const external = types.filter((t) => t === 'srflx' || t === 'relay');
+    report(name, external.length === 0, types.join(',') || 'no candidates');
+  }
+
+  report('runs inside the host', doc.hosted);
+  report('host API is data-only', Object.keys(window.evHost).sort().join(',') === 'markDirty,onSaveRequest,version',
+    Object.keys(window.evHost).join(','));
+  report('no Node.js in the page', typeof require === 'undefined' && typeof process === 'undefined');
+  report('storage starts empty', localStorage.length === 0);
+  localStorage.setItem('probe', 'set');
+
+  await blockedFetch('fetch https', 'https://example.com/');
+  // Names never resolve inside the host, so name-based attempts can fail at
+  // the lookup and hide the layers behind it. The IP literals skip the
+  // lookup: this fetch is stopped by the content security policy, the STUN
+  // attempt by IP address below by the WebRTC policy.
+  await blockedFetch('fetch https by IP address', 'https://1.1.1.1/');
+  await blockedFetch('fetch file://', 'file:///etc/hosts');
+  await blockedFetch('fetch own origin', location.origin + '/other.html');
+  await blockedImage('image from https', 'https://www.google.com/favicon.ico');
+  await blockedImage('image from file://', 'file:///System/Library/CoreServices/Finder.app/Contents/Resources/Finder.icns');
+
+  await noIceToServer('WebRTC reaches no STUN server', 'stun:stun.l.google.com:19302');
+  await noIceToServer('WebRTC reaches no STUN server by IP address', 'stun:162.159.207.0:3478');
+
+  const opened = window.open('https://example.com/');
+  report('window.open', !opened);
+
+  const violations = [];
+  document.addEventListener('securitypolicyviolation', (e) => violations.push(e.blockedURI));
+  const frame = document.createElement('iframe');
+  frame.src = 'https://example.com/';
+  document.body.append(frame);
+  await new Promise((resolve) => setTimeout(resolve, 500));
+  report('iframe to https', violations.some((uri) => uri.startsWith('https://example.com')));
+
+  // The host's user style wins over the document's own !important rules.
+  const override = document.createElement('style');
+  override.textContent = 'iframe { pointer-events: auto !important; }';
+  document.head.append(override);
+  frame.style.setProperty('pointer-events', 'auto', 'important');
+  const pointerEvents = getComputedStyle(frame).pointerEvents;
+  report('iframes receive no pointer input', pointerEvents === 'none', pointerEvents);
+
+  // An iframe inside a shadow root is covered too (user styles pierce shadow
+  // trees). A <frame> cannot be probed here: it needs a frameset as the
+  // document body, which would destroy this page. The selector
+  // "iframe, frame, frameset" covers it, as it does iframes.
+  const shadowHost = document.createElement('div');
+  const shadowFrame = document.createElement('iframe');
+  shadowHost.attachShadow({ mode: 'open' }).append(shadowFrame);
+  document.body.append(shadowHost);
+  shadowFrame.style.setProperty('pointer-events', 'auto', 'important');
+  const shadowPointer = getComputedStyle(shadowFrame).pointerEvents;
+  report('iframes in shadow roots receive no pointer input', shadowPointer === 'none', shadowPointer);
+
+  const before = location.href;
+  location.href = 'https://example.com/';
+  await new Promise((resolve) => setTimeout(resolve, 1000));
+  report('navigation away', location.href === before);
+  console.log('[probe] done');
+})();
+</script>
+</body>
+</html>
