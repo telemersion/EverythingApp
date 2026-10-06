@@ -6,7 +6,8 @@ const crypto = require('node:crypto');
 const { BaseWindow, WebContentsView, session, dialog, clipboard } = require('electron');
 const { checkDocument, formatReport } = require('./conformance');
 const { validateSnapshot } = require('./validate');
-const { writeDocument } = require('./write');
+const { writeDocument, sha256 } = require('./write');
+const { sectionHashes, classifyChange, watchFile } = require('./watch');
 const { serveDocument } = require('./protocol');
 const { hardenSession, hardenContents, WEB_PREFERENCES } = require('./security');
 const { originFor } = require('./urls');
@@ -16,16 +17,20 @@ const SAVE_TIMEOUT_MS = 5000;
 // One open document: its window, its sandboxed view, its file on disk.
 // The main process owns the path; the document only ever sends data.
 class DocumentWindow {
-  constructor({ filePath, html, storeDir, registry }) {
+  constructor({ filePath, html, parts, storeDir, registry }) {
     this.filePath = filePath;
     this.name = path.basename(filePath);
     this.storeDir = storeDir;
     this.registry = registry;
 
     this.html = html;                       // what the protocol handler serves
+    this.known = sectionHashes(parts);      // what we believe is on disk
+    this.running = this.known.behaviour;    // behaviour running in the view
+    this.knownFileHash = sha256(html);
 
     this.latestChange = 0;                  // highest markDirty() counter seen
     this.savedChange = 0;                   // counter covered by the last write
+    this.diskDataChanged = false;
     this.saving = null;
     this.prompting = false;
     this.closeConfirmed = false;
@@ -50,6 +55,7 @@ class DocumentWindow {
 
     this.win.on('close', (event) => this.onClose(event));
     this.win.on('closed', () => this.dispose());
+    this.watcher = watchFile(filePath, () => this.onDiskChange());
     if (process.platform === 'darwin') this.win.setRepresentedFilename(filePath);
 
     registry.add(this);
@@ -123,13 +129,29 @@ class DocumentWindow {
   }
 
   async doSave() {
+    if (this.diskDataChanged) {
+      const choice = await this.ask({
+        type: 'warning',
+        message: `The data in ${this.name} was changed on disk since you opened it.`,
+        detail: 'Keep mine overwrites the data on disk with yours. Take the version on disk discards your changes.',
+        buttons: ['Keep mine', 'Take the version on disk', 'Cancel'],
+        defaultId: 2,
+        cancelId: 2,
+      });
+      if (choice === null || choice === 2) return false;
+      if (choice === 1) return this.reloadFromDisk();
+    }
     try {
       const snapshot = await this.requestSnapshot();
       const problem = validateSnapshot(snapshot.json);
       if (problem) throw new Error(problem);
-      await writeDocument(this.filePath, snapshot.json, { storeDir: this.storeDir });
+      const written = await writeDocument(this.filePath, snapshot.json, { storeDir: this.storeDir });
+      this.acceptOnDisk(written);
+      this.diskDataChanged = false;
       this.savedChange = Math.max(this.savedChange, snapshot.changes);
       this.updateTitle();
+      // Saving spliced our data into newer behaviour from disk: show it.
+      if (this.known.behaviour !== this.running && !this.isDirty) await this.reloadFromDisk();
       return true;
     } catch (err) {
       await this.ask({
@@ -140,6 +162,12 @@ class DocumentWindow {
       });
       return false;
     }
+  }
+
+  acceptOnDisk(html) {
+    const check = checkDocument(html);
+    this.known = sectionHashes(check.parts);
+    this.knownFileHash = sha256(html);
   }
 
   async reloadFromDisk() {
@@ -156,8 +184,11 @@ class DocumentWindow {
       return false;
     }
     this.html = html;
+    this.acceptOnDisk(html);
+    this.running = this.known.behaviour;
     this.latestChange = 0;
     this.savedChange = 0;
+    this.diskDataChanged = false;
     this.rejectPending(new Error('The document was reloaded.'));
     await this.view.webContents.loadURL(`${this.origin}/`);
     this.updateTitle();
@@ -177,6 +208,50 @@ class DocumentWindow {
       if (choice !== 0) return;
     }
     await this.reloadFromDisk();
+  }
+
+  // ---------- External changes ----------
+
+  async onDiskChange() {
+    if (this.saving) await this.saving;
+    if (this.win.isDestroyed()) return;
+    let html;
+    try {
+      html = await fs.readFile(this.filePath, 'utf8');
+    } catch {
+      return; // gone for now (moved, or mid-replace); nothing to compare
+    }
+    if (sha256(html) === this.knownFileHash) return;
+    this.knownFileHash = sha256(html);
+
+    const check = checkDocument(html);
+    if (!check.ok) {
+      await this.showReport(check.errors, 'The file was changed on disk and no longer follows the document specification. The open version keeps running; saving is refused until the file is fixed.');
+      return;
+    }
+    const onDisk = sectionHashes(check.parts);
+    const change = classifyChange(this.known, onDisk);
+    if (!change.behaviour && !change.data) return;
+    this.known = onDisk;
+
+    if (!this.isDirty) {
+      await this.reloadFromDisk();
+      return;
+    }
+    if (change.data) {
+      this.diskDataChanged = true; // resolved by the conflict prompt on the next save
+      return;
+    }
+    const choice = await this.ask({
+      type: 'info',
+      message: `${this.name} was updated on disk.`,
+      detail: 'Its behaviour changed (for example, an agent edited it). Your data is unsaved.',
+      buttons: ['Save my data and reload', 'Reload and discard my changes', 'Later'],
+      defaultId: 0,
+      cancelId: 2,
+    });
+    if (choice === 0) await this.save();
+    else if (choice === 1) await this.reloadFromDisk();
   }
 
   // ---------- Closing ----------
@@ -203,6 +278,7 @@ class DocumentWindow {
   }
 
   dispose() {
+    this.watcher.close();
     this.rejectPending(new Error('The document was closed.'));
     this.registry.remove(this);
     if (!this.view.webContents.isDestroyed()) this.view.webContents.close();

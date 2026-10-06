@@ -2,8 +2,8 @@
 
 // End-to-end smoke test of the save loop, run as Electron's main script:
 //   npm run smoke
-// Opens a copy of the hours sheet, adds a row through the UI, saves and
-// checks the file on disk.
+// Opens a copy of the hours sheet, adds a row through the UI, saves,
+// checks the file on disk, then simulates an agent editing the behaviour.
 const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
@@ -14,7 +14,7 @@ const { Registry } = require('../src/registry');
 const { registerIpc } = require('../src/ipc');
 const { openPath } = require('../src/open');
 const { checkDocument } = require('../src/conformance');
-const { parseDocument } = require('../src/frame');
+const { parseDocument, buildDocument } = require('../src/frame');
 
 registerSchemePrivileges();
 
@@ -70,6 +70,21 @@ async function run(dir) {
   const versions = (await fs.readdir(path.join(storeDir, entry))).filter((n) => n.endsWith('.html'));
   assert.equal(versions.length, 1);
   assert.equal(await fs.readFile(path.join(storeDir, entry, versions[0]), 'utf8'), original);
+
+  step('an agent changes the behaviour on disk: a clean document reloads');
+  const edited = buildDocument({ ...after, style: after.style + 'h1 { color: rgb(200, 0, 0); }\n' });
+  await fs.writeFile(filePath, edited, 'utf8');
+  await until('reloaded with the new style', async () =>
+    !wc.isLoading() && (await js('getComputedStyle(document.querySelector("h1")).color')) === 'rgb(200, 0, 0)');
+  assert.equal(await js('document.querySelectorAll("#rows tr").length'), 1, 'the saved row is still there');
+
+  step('a data change on disk while dirty is never overwritten silently');
+  await js('document.getElementById("add").click()');
+  await until('dirty again', () => doc.isDirty);
+  const external = buildDocument({ ...parseDocument(edited).parts, data: '{"rows":[]}' });
+  await fs.writeFile(filePath, external, 'utf8');
+  await until('conflict detected', () => doc.diskDataChanged);
+  assert.equal(await fs.readFile(filePath, 'utf8'), external, 'the host did not write over the external content');
 
   step('all checks passed');
 }
