@@ -32,7 +32,10 @@ class DocumentWindow {
     this.savedChange = 0;                   // counter covered by the last write
     this.diskDataChanged = false;
     this.missingReported = false;           // "moved or deleted" shown for this disappearance
-    this.saving = null;
+    this.saving = null;                     // the running save
+    this.nextSave = null;                   // the one save queued behind it
+    this.generation = 0;                    // counts reloads of the page
+    this.writes = 0;                        // counts our own writes
     this.prompting = false;
     this.closeConfirmed = false;
     this.pending = new Map();
@@ -127,12 +130,35 @@ class DocumentWindow {
 
   // ---------- Saving ----------
 
+  // One save at a time. A save requested while one runs waits for it, then
+  // saves again with a fresh snapshot; all waiting requests share that one
+  // follow-up. If the running save fails, the follow-up is skipped (false).
   save() {
-    if (!this.saving) this.saving = this.doSave().finally(() => { this.saving = null; });
-    return this.saving;
+    if (!this.saving) {
+      const run = this.doSave().finally(() => {
+        if (this.saving === run) this.saving = null;
+      });
+      this.saving = run;
+      return run;
+    }
+    if (!this.nextSave) {
+      this.nextSave = this.saving.catch(() => false).then((ok) => {
+        this.nextSave = null;
+        return ok ? this.save() : false;
+      });
+    }
+    return this.nextSave;
+  }
+
+  // Resolves once no save is running or queued.
+  async settle() {
+    while (this.saving || this.nextSave) await (this.nextSave || this.saving).catch(() => {});
   }
 
   async doSave() {
+    // A reload while this save runs replaces the page and its counters;
+    // then this save's results no longer apply to them.
+    const generation = this.generation;
     for (;;) {
       if (this.diskDataChanged) {
         const choice = await this.ask({
@@ -144,24 +170,20 @@ class DocumentWindow {
           cancelId: 2,
         });
         if (choice === null || choice === 2) return false;
-        if (choice === 1) return this.reloadFromDisk();
+        if (choice === 1) return this.loadFromDisk();
       }
+      let snapshot;
+      let written;
       try {
-        const snapshot = await this.requestSnapshot();
+        snapshot = await this.requestSnapshot();
         const problem = validateSnapshot(snapshot.json);
         if (problem) throw new Error(problem);
         // Refused if the data on disk is not the data we last saw (known).
-        const written = await writeDocument(this.filePath, snapshot.json,
+        written = await writeDocument(this.filePath, snapshot.json,
           { storeDir: this.storeDir, expectedDataHash: this.known.data });
-        this.acceptOnDisk(written);
-        this.diskDataChanged = false;
-        this.missingReported = false;
-        this.savedChange = Math.max(this.savedChange, snapshot.changes);
-        this.updateTitle();
-        // Saving spliced our data into newer behaviour from disk: show it.
-        if (this.known.behaviour !== this.running && !this.isDirty) await this.reloadFromDisk();
-        return true;
+        this.writes++;
       } catch (err) {
+        if (generation !== this.generation) return false;
         // Someone changed the data just before the write: ask, as if the
         // watcher had reported it.
         if (err.code === 'EV_DATA_CONFLICT' && await this.refreshKnown()) {
@@ -180,6 +202,15 @@ class DocumentWindow {
         });
         return false;
       }
+      if (generation !== this.generation) return false;
+      this.acceptOnDisk(written);
+      this.diskDataChanged = false;
+      this.missingReported = false;
+      this.savedChange = Math.max(this.savedChange, snapshot.changes);
+      this.updateTitle();
+      // Saving spliced our data into newer behaviour from disk: show it.
+      if (this.known.behaviour !== this.running && !this.isDirty) await this.loadFromDisk();
+      return true;
     }
   }
 
@@ -202,7 +233,14 @@ class DocumentWindow {
     this.knownFileHash = sha256(html);
   }
 
+  // Waits for running saves, then replaces the page with the file on disk.
   async reloadFromDisk() {
+    await this.settle();
+    return this.loadFromDisk();
+  }
+
+  // Only for callers that hold the save turn (doSave) or have settled.
+  async loadFromDisk() {
     let html;
     try {
       html = await fs.readFile(this.filePath, 'utf8');
@@ -215,6 +253,7 @@ class DocumentWindow {
       await this.showReport(check.errors, 'The file on disk no longer follows the document specification. The open version keeps running; saving is refused until the file is fixed.');
       return false;
     }
+    this.generation++;
     this.html = html;
     this.acceptOnDisk(html);
     this.running = this.known.behaviour;
@@ -229,15 +268,17 @@ class DocumentWindow {
 
   // View → Reload
   async reloadInteractive() {
+    await this.settle();
     if (this.isDirty) {
       const choice = await this.ask({
         type: 'question',
-        message: `Reload ${this.name} and discard your unsaved changes?`,
-        buttons: ['Reload', 'Cancel'],
-        defaultId: 1,
-        cancelId: 1,
+        message: `Do you want to save the changes you made to ${this.name} before reloading?`,
+        buttons: ['Save and reload', 'Discard and reload', 'Cancel'],
+        defaultId: 0,
+        cancelId: 2,
       });
-      if (choice !== 0) return;
+      if (choice === null || choice === 2) return;
+      if (choice === 0 && !(await this.save())) return;
     }
     await this.reloadFromDisk();
   }
@@ -245,8 +286,9 @@ class DocumentWindow {
   // ---------- External changes ----------
 
   async onDiskChange() {
-    if (this.saving) await this.saving;
+    await this.settle();
     if (this.win.isDestroyed()) return;
+    const { generation, writes } = this;
     let html;
     try {
       html = await fs.readFile(this.filePath, 'utf8');
@@ -256,6 +298,9 @@ class DocumentWindow {
       return;
     }
     this.missingReported = false;
+    // A save or reload ran while we read: it took care of the disk state, and
+    // its own write triggers another check. known must only come from it.
+    if (this.saving || this.writes !== writes || this.generation !== generation) return;
     if (sha256(html) === this.knownFileHash) return;
     this.knownFileHash = sha256(html);
 
@@ -313,22 +358,33 @@ class DocumentWindow {
   // ---------- Closing ----------
 
   onClose(event) {
-    if (this.closeConfirmed || !this.isDirty) return;
+    if (this.closeConfirmed) return;
+    if (!this.isDirty && !this.saving && !this.nextSave) return;
     event.preventDefault();
     this.confirmClose();
   }
 
+  // Waits for running saves; closes only if nothing is left unsaved.
   async confirmClose() {
-    const choice = await this.ask({
-      type: 'question',
-      message: `Do you want to save the changes you made to ${this.name}?`,
-      detail: "Your changes will be lost if you don't save them.",
-      buttons: ['Save', "Don't save", 'Cancel'],
-      defaultId: 0,
-      cancelId: 2,
-    });
-    if (choice === 2 || choice === null) return;
-    if (choice === 0 && !(await this.save())) return;
+    await this.settle();
+    if (this.isDirty) {
+      const choice = await this.ask({
+        type: 'question',
+        message: `Do you want to save the changes you made to ${this.name}?`,
+        detail: "Your changes will be lost if you don't save them.",
+        buttons: ['Save', "Don't save", 'Cancel'],
+        defaultId: 0,
+        cancelId: 2,
+      });
+      if (choice === 2 || choice === null) return;
+      // An edit after the snapshot (or a failed save) keeps the window open;
+      // the dirty marker shows why.
+      if (choice === 0) {
+        await this.save();
+        if (this.isDirty) return;
+      }
+    }
+    if (this.win.isDestroyed()) return;
     this.closeConfirmed = true;
     this.win.close();
   }

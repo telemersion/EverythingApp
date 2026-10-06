@@ -107,13 +107,29 @@ async function run(dir) {
   assert.equal(doc.diskDataChanged, true);
   doc.ask = realAsk;
 
+  step('Save in the close prompt keeps the window open if an edit came after the snapshot');
+  const takeSnapshot = doc.requestSnapshot;
+  doc.requestSnapshot = async function () {
+    const snapshot = await takeSnapshot.call(this);
+    await js('document.getElementById("add").click()');
+    await until('edit after the snapshot', () => doc.latestChange > snapshot.changes);
+    return snapshot;
+  };
+  answer(0, 0); // Save in the close prompt, then Keep mine in the conflict prompt
+  await doc.confirmClose(); // what closing a dirty window runs
+  doc.requestSnapshot = takeSnapshot;
+  doc.ask = realAsk;
+  assert.equal(doc.win.isDestroyed(), false, 'the window stays open');
+  assert.equal(doc.isDirty, true);
+  assert.notEqual(await fs.readFile(filePath, 'utf8'), late, 'Keep mine wrote our data');
+
   step('a moved file is reported once, not written again');
   const shown = [];
-  doc.ask = async (options) => { shown.push(options.message); return 0; }; // Keep mine, then OK
+  doc.ask = async (options) => { shown.push(options.message); return 0; };
   await fs.rename(filePath, `${filePath}.moved`);
   assert.equal(await doc.save(), false);
   await wait(500); // the watcher sees the rename too
-  assert.deepEqual(shown, ['The data in hours.ev.html was changed on disk since you opened it.', 'hours.ev.html was moved or deleted.']);
+  assert.deepEqual(shown, ['hours.ev.html was moved or deleted.']);
   await assert.rejects(fs.access(filePath), 'the file was not recreated');
   doc.ask = realAsk;
 
