@@ -33,6 +33,8 @@ class DocumentWindow {
     this.savedChange = 0;                   // counter covered by the last write
     this.diskDataChanged = false;
     this.missingReported = false;           // "moved or deleted" shown for this disappearance
+    this.watchErrorShown = null;            // key of the disk-check error last shown
+    this.disposed = false;
     this.saving = null;                     // the running save
     this.nextSave = null;                   // the one save queued behind it
     this.generation = 0;                    // counts reloads of the page
@@ -61,16 +63,22 @@ class DocumentWindow {
     this.win.on('close', (event) => this.onClose(event));
     this.win.on('closed', () => this.dispose());
     this.watcher = watchFile(filePath, () => this.onDiskChange()
-      .catch((err) => showError({ action: 'check for changes to', filePath, err })));
+      .catch((err) => this.reportWatchError(err)));
     if (process.platform === 'darwin') this.win.setRepresentedFilename(filePath);
 
     registry.add(this);
     this.updateTitle();
     // Resolves once the document has started loading (after the proxy is set).
+    // If the session cannot be locked down, the window goes away before the
+    // caller reports the error: never a window without its proxy.
     this.ready = hardened.then(() => {
       if (this.view.webContents.isDestroyed()) return;
       this.view.webContents.loadURL(`${this.origin}/`)
         .catch((err) => showError({ action: 'load', filePath, err }));
+    }, (err) => {
+      this.dispose();
+      if (!this.win.isDestroyed()) this.win.destroy();
+      throw err;
     });
   }
 
@@ -206,7 +214,9 @@ class DocumentWindow {
         });
         return false;
       }
-      if (generation !== this.generation) return false;
+      // The data reached disk, but a reload replaced the page meanwhile: its
+      // counters and known state are the reload's, not ours.
+      if (generation !== this.generation) return true;
       this.acceptOnDisk(written);
       this.diskDataChanged = false;
       this.missingReported = false;
@@ -307,6 +317,7 @@ class DocumentWindow {
       return;
     }
     this.missingReported = false;
+    this.watchErrorShown = null;
     // A save or reload ran while we read: it took care of the disk state, and
     // its own write triggers another check. known must only come from it.
     if (this.saving || this.writes !== writes || this.generation !== generation) return;
@@ -352,16 +363,26 @@ class DocumentWindow {
     }
   }
 
-  // Every failed save shows this; the watcher shows it once per disappearance.
+  // Every failed save shows this; the watcher shows it once per disappearance
+  // (counted only if it was shown, not skipped for another open dialog).
   async reportMissing() {
-    this.missingReported = true;
-    await this.ask({
+    const choice = await this.ask({
       type: 'warning',
       message: `${this.name} was moved or deleted.`,
       detail: `Your changes exist only in this window. Put the file back at ${this.filePath} and save again. ` +
         'The last saved version is in the version store.',
       buttons: ['OK'],
     });
+    if (choice !== null) this.missingReported = true;
+  }
+
+  // Errors while checking the disk: the same error is shown once, until the
+  // file can be read again.
+  reportWatchError(err) {
+    const key = (err && (err.code || err.message)) || String(err);
+    if (this.watchErrorShown === key) return;
+    this.watchErrorShown = key;
+    showError({ action: 'check for changes to', filePath: this.filePath, err });
   }
 
   // ---------- Closing ----------
@@ -399,6 +420,8 @@ class DocumentWindow {
   }
 
   dispose() {
+    if (this.disposed) return;
+    this.disposed = true;
     this.watcher.close();
     this.rejectPending(new Error('The document was closed.'));
     this.registry.remove(this);

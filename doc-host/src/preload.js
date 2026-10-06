@@ -41,7 +41,7 @@ function hasFiles(event) {
   return !!event.dataTransfer && Array.from(event.dataTransfer.types).includes('Files');
 }
 
-for (const type of ['dragenter', 'dragover']) {
+for (const type of ['dragenter', 'dragover', 'dragleave', 'drag']) {
   window.addEventListener(type, (event) => {
     if (!event.isTrusted || !hasFiles(event)) return;
     event.preventDefault();
