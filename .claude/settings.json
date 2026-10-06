@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm test *)",
+      "Bash(node --test test/kit.test.js)",
+      "Bash(node --test test/write.test.js)",
+      "Bash(node --test test/watch.test.js)",
+      "Bash(node -e ' *)",
+      "Bash(mkdir -p /private/tmp/claude-253604802/-Volumes-Ddrive-03-personal-EverythingApp/798ada00-399f-4ef7-a1f2-731fb30bf5a9/scratchpad/doc-host/fixtures/src/hours-sheet && cd /private/tmp/claude-253604802/-Volumes-Ddrive-03-personal-EverythingApp/798ada00-399f-4ef7-a1f2-731fb30bf5a9/scratchpad/doc-host/fixtures/src/hours-sheet && sed -n '7,122p' /Volumes/Ddrive/03_personal/EverythingApp/hours-sheet.html | sed 's/^  //' > style.css && printf '{\"lang\":\"en\",\"title\":\"Hours sheet\",\"docType\":\"hours-sheet\",\"docTypeVersion\":\"1.0\"}\\\\n' > meta.json && printf '{\"rows\":[]}\\\\n' > data.json && head -5 style.css && tail -3 style.css)",
+      "Bash(node tools/assemble.js fixtures/src/hours-sheet fixtures/hours-sheet.ev.html)",
+      "Bash(node -p \"require\\('electron/package.json'\\).version\")",
+      "Bash(npx electron *)"
+    ]
+  }
+}
