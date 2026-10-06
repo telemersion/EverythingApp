@@ -25,11 +25,11 @@ for (const name of documents) {
   });
 }
 
-function loadHoursSheet(host) {
-  const html = fs.readFileSync(path.join(FIXTURES, 'hours-sheet.ev.html'), 'utf8');
+function loadFixture(name, host) {
+  const html = fs.readFileSync(path.join(FIXTURES, name), 'utf8');
   const dom = new JSDOM(html, {
     runScripts: 'dangerously',
-    url: 'https://example.test/hours-sheet.ev.html',
+    url: `https://example.test/${name}`,
     beforeParse(window) { if (host) window.evHost = host; },
   });
   return dom.window.document;
@@ -37,7 +37,7 @@ function loadHoursSheet(host) {
 
 test('hours sheet in the host: no Save button, rows reach the host', () => {
   const host = { version: 1, handler: null, dirty: 0, onSaveRequest(fn) { this.handler = fn; }, markDirty() { this.dirty++; } };
-  const document = loadHoursSheet(host);
+  const document = loadFixture('hours-sheet.ev.html', host);
   assert.equal(document.getElementById('save'), null);
   document.getElementById('add').click();
   assert.equal(host.dirty, 1);
@@ -45,8 +45,27 @@ test('hours sheet in the host: no Save button, rows reach the host', () => {
 });
 
 test('hours sheet in a browser: own Save button and status line', () => {
-  const document = loadHoursSheet(null);
+  const document = loadFixture('hours-sheet.ev.html', null);
   assert.ok(document.getElementById('save'));
+  document.getElementById('add').click();
+  assert.equal(document.getElementById('status').textContent, 'Unsaved changes');
+});
+
+test('to-do list in the host: no Save button, items reach the host', () => {
+  const host = { version: 1, handler: null, dirty: 0, onSaveRequest(fn) { this.handler = fn; }, markDirty() { this.dirty++; } };
+  const document = loadFixture('todo-list.ev.html', host);
+  assert.equal(document.getElementById('save'), null);
+  assert.equal(document.getElementById('status'), null);
+  document.getElementById('text').value = 'Buy milk';
+  document.getElementById('add').click();
+  assert.equal(host.dirty, 1);
+  assert.deepEqual(JSON.parse(host.handler()).items, [{ text: 'Buy milk', done: false }]);
+});
+
+test('to-do list in a browser: own Save button and status line', () => {
+  const document = loadFixture('todo-list.ev.html', null);
+  assert.ok(document.getElementById('save'));
+  document.getElementById('text').value = 'Buy milk';
   document.getElementById('add').click();
   assert.equal(document.getElementById('status').textContent, 'Unsaved changes');
 });

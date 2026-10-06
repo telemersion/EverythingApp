@@ -156,6 +156,32 @@ async function run(dir) {
   await assert.rejects(fs.access(filePath), 'the file was not recreated');
   doc.ask = realAsk;
 
+  step('a third document from new sources (to-do list) opens, saves and reopens');
+  const todoPath = path.join(dir, 'todo.ev.html');
+  await fs.copyFile(path.join(__dirname, '..', 'fixtures', 'todo-list.ev.html'), todoPath);
+  const todoOriginal = await fs.readFile(todoPath, 'utf8');
+  const openTodo = async () => {
+    const todo = await openPath(todoPath, { registry, storeDir });
+    assert.ok(todo, 'the to-do list opens');
+    await until('to-do list loaded', () => !todo.view.webContents.isLoading());
+    return todo;
+  };
+  const todo = await openTodo();
+  await todo.view.webContents.executeJavaScript(`document.getElementById("text").value = "Buy milk";
+    document.getElementById("add").click()`);
+  await until('to-do list dirty', () => todo.isDirty);
+  assert.equal(await todo.save(), true);
+  const todoSaved = parseDocument(await fs.readFile(todoPath, 'utf8')).parts;
+  assert.deepEqual({ ...todoSaved, data: '' }, { ...parseDocument(todoOriginal).parts, data: '' },
+    'everything but the data is unchanged');
+  assert.deepEqual(JSON.parse(todoSaved.data).items, [{ text: 'Buy milk', done: false }]);
+  todo.win.close();
+  await until('to-do list closed', () => todo.win.isDestroyed());
+  const reopened = await openTodo();
+  assert.notEqual(reopened, todo);
+  assert.equal(await reopened.view.webContents.executeJavaScript('document.querySelector("#items li span").textContent'),
+    'Buy milk');
+
   step('all checks passed');
 }
 
