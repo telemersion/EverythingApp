@@ -2,7 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { formatErrorReport } = require('../src/errors');
+const { formatErrorReport, errorBox } = require('../src/errors');
 const { version } = require('../package.json');
 
 test('the error report names action, file, message, stack and versions', () => {
@@ -19,4 +19,18 @@ test('the error report names action, file, message, stack and versions', () => {
 test('the error report works without a file or an Error object', () => {
   const report = formatErrorReport({ action: 'show the open dialog', err: 'plain text' });
   assert.match(report, /^EverythingApp could not show the open dialog\.\nFile: \(none\)\n\nError: plain text\n/);
+});
+
+test('the error sheet shows the headline and the report, with Copy report first', () => {
+  const err = new Error('disk on fire');
+  const { report, options } = errorBox({ action: 'load', filePath: '/tmp/hours.ev.html', err });
+  assert.equal(report, formatErrorReport({ action: 'load', filePath: '/tmp/hours.ev.html', err }));
+  assert.deepEqual(options, {
+    type: 'error',
+    message: 'EverythingApp could not load hours.ev.html.',
+    detail: report,
+    buttons: ['Copy report', 'OK'],
+    defaultId: 1,
+    cancelId: 1,
+  });
 });

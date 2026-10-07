@@ -1,6 +1,6 @@
 'use strict';
 
-// Open documents, findable by web contents (IPC sender), window and path.
+// Open documents, findable by web contents (IPC sender) and path.
 class Registry {
   constructor() {
     this.documents = new Set();
@@ -16,11 +16,6 @@ class Registry {
 
   bySender(webContentsId) {
     for (const doc of this.documents) if (doc.webContentsId === webContentsId) return doc;
-    return null;
-  }
-
-  byWindow(win) {
-    for (const doc of this.documents) if (doc.win === win) return doc;
     return null;
   }
 

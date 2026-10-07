@@ -75,5 +75,5 @@ window.addEventListener('drop', (event) => {
   const paths = Array.from(event.dataTransfer.files)
     .map((file) => webUtils.getPathForFile(file))
     .filter(Boolean);
-  if (paths.length) ipcRenderer.send('doc:dropped-files', paths);
+  if (paths.length) ipcRenderer.send('doc:dropped-files', { loadId, paths });
 }, true);

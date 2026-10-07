@@ -10,7 +10,7 @@ const { sectionHashes, classifyChange, watchFile } = require('./watch');
 const { serveDocument } = require('./protocol');
 const { hardenSession, hardenContents, WEB_PREFERENCES } = require('./security');
 const { SCHEME, originFor } = require('./urls');
-const { showError, formatErrorReport } = require('./errors');
+const { errorBox, formatErrorReport } = require('./errors');
 const { emptyStatus, describeStatus } = require('./status');
 const { LoadTags } = require('./load-tags');
 
@@ -77,7 +77,7 @@ class Document {
     this.ready = hardened.then(() => {
       if (this.view.webContents.isDestroyed()) return;
       this.view.webContents.loadURL(`${this.origin}/`)
-        .then(() => this.ui.rendered('load'), (err) => showError({ action: 'load', filePath, err }));
+        .then(() => this.ui.rendered('load'), (err) => this.reportError('load', err));
     }, (err) => {
       this.dispose();
       throw err;
@@ -159,6 +159,14 @@ class Document {
       this.pending.set(requestId, { resolve, reject, timer });
       this.view.webContents.send('doc:request-save', requestId);
     });
+  }
+
+  // Files the user dropped on the page: absolute paths, and only from the
+  // current page load. The workspace opens them.
+  droppedPaths(payload) {
+    if (!payload || typeof payload !== 'object' || !this.tags.accepts(payload.loadId)
+      || !Array.isArray(payload.paths)) return [];
+    return payload.paths.filter((p) => typeof p === 'string' && path.isAbsolute(p));
   }
 
   rejectPending(reason) {
@@ -269,7 +277,7 @@ class Document {
       // Saving spliced our data into newer outside data from disk: show it.
       // The save itself succeeded, whatever happens to this reload.
       if (this.known.outsideData !== this.running && !this.isDirty) {
-        await this.loadFromDisk().catch((err) => showError({ action: 'reload', filePath: this.filePath, err }));
+        await this.loadFromDisk().catch((err) => this.reportError('reload', err));
       }
       return true;
     }
@@ -430,6 +438,19 @@ class Document {
         'The last saved version is in the version store.',
       buttons: ['OK'],
     });
+  }
+
+  // An unexpected error after the user did something (the page failed to
+  // load, or to reload after a save): the error report as a sheet. Nothing
+  // once the document is closed (closing aborts a load). Never rejects.
+  async reportError(action, err) {
+    if (this.disposed) return;
+    const { report, options } = errorBox({ action, filePath: this.filePath, err });
+    try {
+      if (await this.ui.sheet(options) === 0) clipboard.writeText(report);
+    } catch (sheetErr) {
+      console.error(report, sheetErr);
+    }
   }
 
   // Errors while checking the disk: the status keeps the newest report

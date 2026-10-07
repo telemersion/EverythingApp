@@ -2,60 +2,35 @@
 
 const fs = require('node:fs/promises');
 const path = require('node:path');
-const { dialog, clipboard } = require('electron');
 const { isDocument, checkDocument, formatReport } = require('./conformance');
-const { DocumentWindow } = require('./document-window');
 
 const MAX_FILE_BYTES = 60 * 1024 * 1024;
 
-// Opens a file in the host: refuses anything that is not a conforming
-// document, focuses the window if the document is already open.
-async function openPath(rawPath, { registry, storeDir, allowDevTools = false }) {
+// Reads a file the user wants to open and says what it is. Never throws.
+//   { kind: 'document', filePath, check }      conforming; check.text and check.parts feed the Document
+//   { kind: 'not-document', filePath }          no <meta name="ev-host-api">
+//   { kind: 'refused', filePath, report }       a document that does not conform
+//   { kind: 'error', filePath: rawPath, message, code }   could not be read (code: err.code, e.g. 'ENOENT')
+// filePath is the real path: documents are compared by it (registry.byPath).
+async function readDocumentFile(rawPath) {
   let filePath;
   let bytes;
   try {
+    // realpath returns the case stored on disk on macOS (APFS, verified
+    // 2026-10-07), so one file opened under two spellings is found by
+    // byPath; Windows is checked by hand in Task 14.
     filePath = await fs.realpath(path.resolve(rawPath));
     const stat = await fs.stat(filePath);
     if (!stat.isFile()) throw new Error('This is not a file.');
     if (stat.size > MAX_FILE_BYTES) throw new Error('The file is larger than 60 MB.');
     bytes = await fs.readFile(filePath);
   } catch (err) {
-    await dialog.showMessageBox({ type: 'error', message: `${path.basename(rawPath)} could not be opened.`, detail: err.message });
-    return null;
+    return { kind: 'error', filePath: rawPath, message: err.message, code: err.code };
   }
-
-  const open = registry.byPath(filePath);
-  if (open) {
-    open.focus();
-    return open;
-  }
-
-  if (!isDocument(bytes)) {
-    await dialog.showMessageBox({
-      type: 'info',
-      message: `${path.basename(filePath)} is not an EverythingApp document.`,
-      detail: 'EverythingApp opens HTML documents that contain <meta name="ev-host-api">.',
-    });
-    return null;
-  }
-
+  if (!isDocument(bytes)) return { kind: 'not-document', filePath };
   const check = checkDocument(bytes);
-  if (!check.ok) {
-    const report = formatReport(filePath, check.errors);
-    const { response } = await dialog.showMessageBox({
-      type: 'warning',
-      message: `EverythingApp refused to open ${path.basename(filePath)}.`,
-      detail: report,
-      buttons: ['Copy report', 'OK'],
-      defaultId: 1,
-    });
-    if (response === 0) clipboard.writeText(report);
-    return null;
-  }
-
-  const doc = new DocumentWindow({ filePath, html: check.text, parts: check.parts, storeDir, registry, allowDevTools });
-  await doc.ready;
-  return doc;
+  if (!check.ok) return { kind: 'refused', filePath, report: formatReport(filePath, check.errors) };
+  return { kind: 'document', filePath, check };
 }
 
-module.exports = { openPath };
+module.exports = { readDocumentFile };

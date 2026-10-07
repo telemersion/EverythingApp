@@ -1,19 +1,23 @@
 'use strict';
 
 const { Menu, shell } = require('electron');
-const { showError } = require('./errors');
 
-// current() returns the focused DocumentWindow or null.
-function buildMenu({ current, showOpenDialog, isDev }) {
+// Ids of the items that need an active document.
+const DOCUMENT_ITEMS = ['save', 'close', 'reveal', 'reload', 'dev-tools'];
+
+// The application menu. Items act on the workspace's active document;
+// workspace.apply() refreshes their enabled and checked states (updateMenu).
+// Menu accelerators fire while a document view has keyboard focus (M2 Task 1
+// spike), so no shortcut needs a before-input-event handler.
+function buildMenu({ workspace, isDev }) {
   const isMac = process.platform === 'darwin';
-  // Runs fn on the focused document; anything it throws is shown as "could
-  // not <action> <file>".
+  // Runs fn; anything it throws is shown as "could not <action> <file>".
+  const run = (action, fn, filePath) => Promise.resolve()
+    .then(fn)
+    .catch((err) => workspace.showError({ action, filePath, err }));
   const withDoc = (action, fn) => () => {
-    const doc = current();
-    if (!doc) return;
-    Promise.resolve()
-      .then(() => fn(doc))
-      .catch((err) => showError({ action, filePath: doc.filePath, err }));
+    const doc = workspace.activeDocument();
+    if (doc) run(action, () => fn(doc), doc.filePath);
   };
 
   const template = [
@@ -21,12 +25,13 @@ function buildMenu({ current, showOpenDialog, isDev }) {
     {
       label: 'File',
       submenu: [
-        { label: 'Open…', accelerator: 'CmdOrCtrl+O', click: () => showOpenDialog() },
+        { label: 'Open…', accelerator: 'CmdOrCtrl+O', click: () => run('show the open dialog', () => workspace.openDialog()) },
+        { id: 'save', label: 'Save', accelerator: 'CmdOrCtrl+S', click: withDoc('save', (doc) => doc.save()) },
+        { id: 'close', label: 'Close', accelerator: 'CmdOrCtrl+W', click: withDoc('close', (doc) => workspace.closeDocument(doc.id)) },
+        { label: 'Close Window', accelerator: 'CmdOrCtrl+Shift+W', click: () => workspace.win.close() },
         { type: 'separator' },
-        { label: 'Save', accelerator: 'CmdOrCtrl+S', click: withDoc('save', (doc) => doc.save()) },
-        { label: 'Close', accelerator: 'CmdOrCtrl+W', click: withDoc('close', (doc) => doc.win.close()) },
-        { type: 'separator' },
-        { label: isMac ? 'Reveal in Finder' : 'Show in folder', click: withDoc('show', (doc) => shell.showItemInFolder(doc.filePath)) },
+        // Update Kit… (update-kit) and Undo Kit Update (undo-kit) come in Task 13.
+        { id: 'reveal', label: isMac ? 'Reveal in Finder' : 'Show in folder', click: withDoc('show', (doc) => shell.showItemInFolder(doc.filePath)) },
         ...(isMac ? [] : [{ type: 'separator' }, { role: 'quit' }]),
       ],
     },
@@ -34,17 +39,63 @@ function buildMenu({ current, showOpenDialog, isDev }) {
     {
       label: 'View',
       submenu: [
-        { label: 'Reload', accelerator: 'CmdOrCtrl+R', click: withDoc('reload', (doc) => doc.reloadInteractive()) },
+        { id: 'list-visible', label: 'Document List', type: 'checkbox', click: () => workspace.setList({ visible: !workspace.model.list.visible }) },
+        { id: 'list-mode-list', label: 'List', type: 'radio', click: () => workspace.setList({ mode: 'list' }) },
+        { id: 'list-mode-thumbnails', label: 'Thumbnails', type: 'radio', click: () => workspace.setList({ mode: 'thumbnails' }) },
+        { type: 'separator' },
+        // Split Right (split-right) and Split Down (split-down) come in Task 11.
+        { id: 'reload', label: 'Reload', accelerator: 'CmdOrCtrl+R', click: withDoc('reload', (doc) => doc.reloadInteractive()) },
         ...(isDev ? [{
+          id: 'dev-tools',
           label: 'Developer Tools',
           accelerator: isMac ? 'Alt+Cmd+I' : 'Ctrl+Shift+I',
           click: withDoc('open the developer tools for', (doc) => doc.view.webContents.toggleDevTools()),
         }] : []),
+        // Host UI Developer Tools comes in Task 10.
       ],
     },
-    { role: 'windowMenu' },
+    {
+      label: 'Window',
+      role: 'window',
+      submenu: [
+        { role: 'minimize' },
+        ...(isMac ? [{ role: 'zoom' }] : []),
+        { type: 'separator' },
+        { label: 'Next Tab', accelerator: 'Ctrl+Tab', click: () => workspace.cycleTab(1) },
+        { label: 'Previous Tab', accelerator: 'Ctrl+Shift+Tab', click: () => workspace.cycleTab(-1) },
+        {
+          label: 'Select Tab',
+          submenu: [1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => ({
+            label: `Tab ${n}`,
+            accelerator: `CmdOrCtrl+${n}`,
+            click: () => workspace.selectTabAt(n - 1),
+          })),
+        },
+        {
+          label: 'Focus Pane',
+          submenu: ['Left', 'Right', 'Up', 'Down'].map((side) => ({
+            label: side,
+            accelerator: `CmdOrCtrl+Alt+${side}`,
+            click: () => workspace.focusNeighbour(side.toLowerCase()),
+          })),
+        },
+      ],
+    },
   ];
-  return Menu.buildFromTemplate(template);
+  const menu = Menu.buildFromTemplate(template);
+  updateMenu(menu, workspace);
+  return menu;
 }
 
-module.exports = { buildMenu };
+// Enabled and checked states from the workspace.
+function updateMenu(menu, workspace) {
+  const item = (id) => menu.getMenuItemById(id);
+  const hasDocument = workspace.activeDocument() !== null;
+  for (const id of DOCUMENT_ITEMS) if (item(id)) item(id).enabled = hasDocument;
+  const { list } = workspace.model;
+  item('list-visible').checked = list.visible;
+  item('list-mode-list').checked = list.mode === 'list';
+  item('list-mode-thumbnails').checked = list.mode === 'thumbnails';
+}
+
+module.exports = { buildMenu, updateMenu };

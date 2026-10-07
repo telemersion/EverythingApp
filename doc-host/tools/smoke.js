@@ -1,26 +1,32 @@
 'use strict';
 
-// End-to-end smoke test of the save loop, run as Electron's main script:
+// End-to-end smoke test of the workspace and the save loop, run as Electron's
+// main script:
 //   npm run smoke
-// Opens a copy of the hours sheet, adds a row through the UI, saves,
-// checks the file on disk, then simulates an agent editing the behaviour.
+// Opens copies of the fixtures in one workspace window, adds rows through the
+// UI, saves, checks the files on disk, simulates an agent editing the
+// behaviour, then closes, persists and restores the workspace. Everything,
+// including workspace.json and the version store, lives in a temporary
+// directory.
 const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
 const assert = require('node:assert/strict');
-const { app, ipcMain } = require('electron');
+const { app, ipcMain, BaseWindow } = require('electron');
 const { registerSchemePrivileges } = require('../src/protocol');
-const { Registry } = require('../src/registry');
 const { registerIpc } = require('../src/ipc');
-const { openPath } = require('../src/open');
+const { Workspace, closeSummaryDetail } = require('../src/workspace');
+const { buildMenu } = require('../src/menu');
+const { docsInOrder, activeDocId, panesInOrder, paneOf, splitPane } = require('../src/workspace-model');
 const { checkDocument } = require('../src/conformance');
 const { parseDocument, buildDocument } = require('../src/frame');
 
 registerSchemePrivileges();
-// Keep running if a step closes the window, so its assertion can report it.
+// Keep running if a step closes a window, so its assertion can report it.
 app.on('window-all-closed', () => {});
 
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const fixture = (name) => path.join(__dirname, '..', 'fixtures', `${name}.ev.html`);
 
 // A condition that throws or rejects (e.g. executeJavaScript while the page
 // reloads) counts as not yet true.
@@ -36,26 +42,61 @@ function step(text) {
   console.log(`[smoke] ${text}`);
 }
 
+async function exists(p) {
+  return fs.access(p).then(() => true, () => false);
+}
+
 async function run(dir) {
   const filePath = path.join(dir, 'hours.ev.html');
   const storeDir = path.join(dir, 'store');
-  await fs.copyFile(path.join(__dirname, '..', 'fixtures', 'hours-sheet.ev.html'), filePath);
+  const workspaceFile = path.join(dir, 'workspace.json');
+  await fs.copyFile(fixture('hours-sheet'), filePath);
   const original = await fs.readFile(filePath, 'utf8');
 
-  const registry = new Registry();
-  registerIpc({ registry, open: (p) => openPath(p, { registry, storeDir }) });
+  const workspace = new Workspace({ storeDir, workspaceFile });
+  const menu = buildMenu({ workspace, isDev: false });
+  workspace.menu = menu;
+  registerIpc({ workspace });
   const hellos = []; // every page load that announced itself: { sender, loadId }
   ipcMain.on('doc:hello', (event, loadId) => hellos.push({ sender: event.sender.id, loadId }));
-  const doc = await openPath(filePath, { registry, storeDir });
-  assert.ok(doc, 'the fixture opens');
+  assert.deepEqual(await workspace.restore(), { failed: [] }, 'no workspace.json yet: an empty workspace');
+
+  // Sheets are answered by stubbing workspace.sheet (a real one would block).
+  // The stub records every sheet it is asked to show; without an answer left
+  // it returns null, as when no sheet can be shown.
+  let sheets = [];
+  const answer = (...responses) => {
+    sheets = [];
+    workspace.sheet = async (options) => {
+      sheets.push(options);
+      return responses.length ? responses.shift() : null;
+    };
+  };
+  answer();
+
+  const openDoc = async (p, options) => {
+    const opened = await workspace.open(p, options);
+    assert.ok(opened, `${path.basename(p)} opens`);
+    await until(`${path.basename(p)} loaded`, () => !opened.view.webContents.isLoading());
+    return opened;
+  };
+  const addRowTo = async (d, label) => {
+    await d.view.webContents.executeJavaScript('document.getElementById("add").click()');
+    await until(label, () => d.isDirty);
+  };
+  const addTodo = async (d, text) => {
+    await d.view.webContents.executeJavaScript(`document.getElementById("text").value = ${JSON.stringify(text)};
+      document.getElementById("add").click()`);
+    await until(`to-do "${text}" added`, () => d.isDirty);
+  };
+  const dataOf = async (p) => JSON.parse(parseDocument(await fs.readFile(p, 'utf8')).parts.data);
+
+  const doc = await openDoc(filePath);
+  assert.equal(workspace.activeDocument(), doc);
   const wc = doc.view.webContents;
-  await until('page loaded', () => !wc.isLoading());
   const js = (code) => wc.executeJavaScript(code);
   const readDisk = () => fs.readFile(filePath, 'utf8');
-  const addRow = async (label) => {
-    await js('document.getElementById("add").click()');
-    await until(label, () => doc.isDirty);
-  };
+  const addRow = (label) => addRowTo(doc, label);
 
   step('the document runs hosted, without its own Save button');
   // Kit 1.1.0 hides the document's fallback Save button in the host.
@@ -72,7 +113,7 @@ async function run(dir) {
   step('adding a row marks the document dirty');
   await js('document.getElementById("add").click()');
   await until('dirty', () => doc.isDirty);
-  assert.match(doc.win.getTitle(), /^• hours\.ev\.html$/);
+  assert.match(workspace.win.getTitle(), /^• hours\.ev\.html$/);
 
   step('saving writes the row into the data block only');
   assert.equal(await doc.save(), true);
@@ -83,7 +124,7 @@ async function run(dir) {
   assert.deepEqual({ ...after, data: '' }, { ...before, data: '' }, 'everything but the data is unchanged');
   assert.equal(JSON.parse(after.data).rows.length, 1);
   assert.equal(doc.isDirty, false);
-  assert.equal(doc.win.getTitle(), 'hours.ev.html');
+  assert.equal(workspace.win.getTitle(), 'hours.ev.html');
 
   step('the previous version is in the version store');
   const [entry] = await fs.readdir(storeDir);
@@ -91,22 +132,10 @@ async function run(dir) {
   assert.equal(versions.length, 1);
   assert.equal(await fs.readFile(path.join(storeDir, entry, versions[0]), 'utf8'), original);
 
-  // Sheets are answered by stubbing doc.ui.sheet (a real one would block).
-  // The stub records every sheet it is asked to show.
-  const realSheet = doc.ui.sheet;
-  let sheets = [];
-  const answer = (...responses) => {
-    sheets = [];
-    doc.ui.sheet = async (options) => {
-      sheets.push(options);
-      return responses.shift() ?? null;
-    };
-  };
-  const unstub = () => { doc.ui.sheet = realSheet; };
   // An agent edits the style on disk (everything but the data stays).
-  const restyle = async (rule) => {
-    const parts = parseDocument(await readDisk()).parts;
-    await fs.writeFile(filePath, buildDocument({ ...parts, style: `${parts.style}${rule}\n` }), 'utf8');
+  const restyle = async (rule, p = filePath) => {
+    const parts = parseDocument(await fs.readFile(p, 'utf8')).parts;
+    await fs.writeFile(p, buildDocument({ ...parts, style: `${parts.style}${rule}\n` }), 'utf8');
   };
   const h1Style = (property) => js(`getComputedStyle(document.querySelector("h1")).${property}`);
 
@@ -169,7 +198,6 @@ async function run(dir) {
   assert.equal(await h1Style('letterSpacing'), '1px', 'the new style runs');
   assert.equal(await js('document.querySelectorAll("#rows tr").length'), 2, 'with our data');
   assert.deepEqual(sheets, [], 'no sheet');
-  unstub();
 
   step('an edit that lands during an auto-reload becomes a banner');
   answer();
@@ -203,7 +231,6 @@ async function run(dir) {
   assert.equal(doc.status.updatedWhileDirty, false);
   assert.equal(doc.generation, generation + 1);
   assert.equal(await h1Style('fontStyle'), 'italic');
-  unstub();
 
   step('a data change on disk while dirty is never overwritten silently');
   answer();
@@ -240,9 +267,8 @@ async function run(dir) {
   assert.equal(await doc.save(), false); // before the watcher's 200 ms debounce
   assert.equal(await readDisk(), late, 'the host did not write over the external content');
   assert.equal(doc.status.dataConflict, true);
-  unstub();
 
-  step('Save in the close prompt keeps the window open if an edit came after the snapshot');
+  step('Save in the close prompt keeps the document open if an edit came after the snapshot');
   const takeSnapshot = doc.requestSnapshot;
   doc.requestSnapshot = async function () {
     const snapshot = await takeSnapshot.call(this);
@@ -251,10 +277,10 @@ async function run(dir) {
     return snapshot;
   };
   answer(0, 0); // Save in the close prompt, then Keep mine in the conflict prompt
-  assert.equal(await doc.confirmClose(), false, 'closing is cancelled'); // what closing a dirty window runs
-  doc.requestSnapshot = takeSnapshot;
-  unstub();
-  assert.equal(doc.win.isDestroyed(), false, 'the window stays open');
+  assert.equal(await workspace.closeDocument(doc.id), false, 'closing is cancelled'); // what Cmd+W runs
+  delete doc.requestSnapshot;
+  assert.equal(workspace.documentById(doc.id), doc, 'the document stays open');
+  assert.equal(doc.disposed, false);
   assert.equal(doc.isDirty, true);
   assert.notEqual(await readDisk(), late, 'Keep mine wrote our data');
 
@@ -268,8 +294,7 @@ async function run(dir) {
   const beforeReload = doc.generation;
   answer(0); // Save and reload
   await doc.reloadInteractive(); // View → Reload on a dirty document
-  doc.requestSnapshot = takeSnapshot;
-  unstub();
+  delete doc.requestSnapshot;
   assert.equal(doc.generation, beforeReload, 'the page was not reloaded');
   assert.equal(doc.isDirty, true);
 
@@ -283,7 +308,6 @@ async function run(dir) {
     assert.equal(await doc.save(), false);
   } finally {
     await fs.chmod(filePath, 0o644);
-    unstub();
   }
   assert.equal(await readDisk(), beforeFailure, 'the original is unchanged');
   assert.equal(await versionCount(), versionsBeforeFailure, 'no version was stored');
@@ -299,33 +323,290 @@ async function run(dir) {
   assert.deepEqual(sheets.map((o) => o.message), ['hours.ev.html was moved or deleted.']);
   assert.equal(doc.status.missing, true);
   await assert.rejects(fs.access(filePath), 'the file was not recreated');
-  unstub();
+  // Put the file back: the document saves cleanly again for the steps below.
+  await fs.rename(`${filePath}.moved`, filePath);
+  answer();
+  assert.equal(await doc.save(), true);
+  assert.equal(doc.status.missing, false);
+  assert.deepEqual(sheets, []);
 
   step('a third document from new sources (to-do list) opens, saves and reopens');
   const todoPath = path.join(dir, 'todo.ev.html');
-  await fs.copyFile(path.join(__dirname, '..', 'fixtures', 'todo-list.ev.html'), todoPath);
+  await fs.copyFile(fixture('todo-list'), todoPath);
   const todoOriginal = await fs.readFile(todoPath, 'utf8');
-  const openTodo = async () => {
-    const todo = await openPath(todoPath, { registry, storeDir });
-    assert.ok(todo, 'the to-do list opens');
-    await until('to-do list loaded', () => !todo.view.webContents.isLoading());
-    return todo;
-  };
-  const todo = await openTodo();
-  await todo.view.webContents.executeJavaScript(`document.getElementById("text").value = "Buy milk";
-    document.getElementById("add").click()`);
-  await until('to-do list dirty', () => todo.isDirty);
+  const todo = await openDoc(todoPath);
+  await addTodo(todo, 'Buy milk');
   assert.equal(await todo.save(), true);
   const todoSaved = parseDocument(await fs.readFile(todoPath, 'utf8')).parts;
   assert.deepEqual({ ...todoSaved, data: '' }, { ...parseDocument(todoOriginal).parts, data: '' },
     'everything but the data is unchanged');
   assert.deepEqual(JSON.parse(todoSaved.data).items, [{ text: 'Buy milk', done: false }]);
-  todo.win.close();
-  await until('to-do list closed', () => todo.win.isDestroyed());
-  const reopened = await openTodo();
+  assert.equal(await workspace.closeDocument(todo.id), true);
+  assert.equal(todo.disposed, true);
+  const reopened = await openDoc(todoPath);
   assert.notEqual(reopened, todo);
   assert.equal(await reopened.view.webContents.executeJavaScript('document.querySelector("#items li span").textContent'),
     'Buy milk');
+
+  step('three documents open as tabs in one window');
+  const otherPath = path.join(dir, 'other', 'hours.ev.html');
+  await fs.mkdir(path.dirname(otherPath));
+  await fs.copyFile(fixture('hours-sheet'), otherPath);
+  const other = await openDoc(otherPath);
+  assert.equal(BaseWindow.getAllWindows().length, 1, 'one window');
+  assert.deepEqual(docsInOrder(workspace.model), [doc.id, reopened.id, other.id]);
+  assert.equal(activeDocId(workspace.model), other.id, 'the last opened is active');
+  assert.equal(workspace.activeDocument(), other);
+  // One pane: right of the document list (240), below the tab strip (32);
+  // only the selected document's view shows.
+  const content = workspace.win.getContentBounds();
+  const documentRect = { x: 240, y: 32, width: content.width - 240, height: content.height - 32 };
+  for (const d of [doc, reopened, other]) {
+    assert.equal(d.view.getVisible(), d === other, `${d.filePath} visible only if selected`);
+    assert.deepEqual(d.view.getBounds(), documentRect);
+  }
+
+  step('opening an open document selects its tab');
+  assert.equal(await workspace.open(filePath), doc);
+  assert.equal(workspace.activeDocument(), doc);
+  assert.deepEqual(docsInOrder(workspace.model), [doc.id, reopened.id, other.id], 'no new tab');
+  assert.equal(doc.view.getVisible(), true);
+  assert.equal(other.view.getVisible(), false);
+  const otherSpelling = path.join(dir, 'HOURS.EV.HTML');
+  if (await exists(otherSpelling)) { // a case-insensitive volume
+    workspace.select(other.id);
+    assert.equal(await workspace.open(otherSpelling), doc, 'found under another spelling');
+    assert.equal(workspace.activeDocument(), doc);
+  }
+  assert.equal(workspace.registry.documents.size, 3);
+  assert.deepEqual(sheets, []);
+
+  step('Save acts on the active document only');
+  answer();
+  await addRowTo(doc, 'hours dirty');
+  await addRowTo(other, 'other dirty');
+  const hoursBeforeSave = await readDisk();
+  const otherBeforeSave = await fs.readFile(otherPath, 'utf8');
+  menu.getMenuItemById('save').click(); // File → Save, as Cmd+S runs it
+  await until('the active document is saved', () => !doc.isDirty);
+  assert.notEqual(await readDisk(), hoursBeforeSave, 'the active document was written');
+  await wait(300); // time for a wrong save to land
+  assert.equal(await fs.readFile(otherPath, 'utf8'), otherBeforeSave, 'the other document was not written');
+  assert.equal(other.isDirty, true);
+  assert.deepEqual(sheets, []);
+
+  step('the title shows the active document and its unsaved marker');
+  const folder = path.basename(dir);
+  assert.equal(workspace.win.getTitle(), `hours.ev.html · ${folder}`);
+  workspace.select(other.id);
+  assert.equal(workspace.win.getTitle(), '• hours.ev.html · other');
+  workspace.select(reopened.id);
+  assert.equal(workspace.win.getTitle(), 'todo.ev.html');
+  if (process.platform === 'darwin') {
+    assert.equal(workspace.win.isDocumentEdited(), true, 'the close button shows that a document is dirty');
+    assert.equal(workspace.win.getRepresentedFilename(), todoPath);
+  }
+
+  step('Cmd+W closes the active document after its prompt');
+  workspace.select(other.id);
+  answer(0); // Save
+  menu.getMenuItemById('close').click(); // File → Close, as Cmd+W runs it
+  await until('the document closed', () => other.disposed);
+  assert.deepEqual(sheets.map((o) => [o.message, o.buttons]),
+    [['Do you want to save the changes you made to hours.ev.html?', ['Save', "Don't save", 'Cancel']]]);
+  assert.equal((await dataOf(otherPath)).rows.length, 1, 'written');
+  assert.deepEqual(docsInOrder(workspace.model), [doc.id, reopened.id]);
+  assert.equal(workspace.documentById(other.id), null);
+  assert.equal(workspace.win.contentView.children.includes(other.view), false, 'its view left the window');
+  assert.equal(workspace.activeDocument(), reopened, 'the tab to its left takes its place');
+  assert.equal(reopened.view.getVisible(), true);
+  if (process.platform === 'darwin') assert.equal(workspace.win.isDocumentEdited(), false);
+  workspace.select(doc.id);
+  assert.equal(workspace.win.getTitle(), 'hours.ev.html', 'one hours.ev.html left: no folder in its label');
+  workspace.select(reopened.id);
+
+  step('closing waits for a running save');
+  // A slow save; an edit after its snapshot leaves the document dirty.
+  await addTodo(reopened, 'Call Bob');
+  reopened.requestSnapshot = async function () {
+    const snapshot = await takeSnapshot.call(this);
+    await addTodo(this, 'Edit after the snapshot');
+    await until('edit after the snapshot', () => this.latestChange > snapshot.changes);
+    await wait(500);
+    return snapshot;
+  };
+  let written = false;
+  const prompts = [];
+  workspace.sheet = async (options) => {
+    prompts.push({ message: options.message, afterWrite: written });
+    return 2; // Cancel
+  };
+  const slowSave = reopened.save().then((ok) => {
+    written = true;
+    return ok;
+  });
+  assert.equal(await workspace.closeDocument(reopened.id), false, 'still dirty after the save: its prompt, cancelled');
+  assert.equal(await slowSave, true);
+  assert.deepEqual(prompts, [{ message: 'Do you want to save the changes you made to todo.ev.html?', afterWrite: true }]);
+  assert.equal(workspace.documentById(reopened.id), reopened, 'the document stays');
+  assert.deepEqual((await dataOf(todoPath)).items.map((i) => i.text), ['Buy milk', 'Call Bob']);
+  // A slow save that leaves the document clean: closing waits, then closes without a prompt.
+  reopened.requestSnapshot = async function () {
+    const snapshot = await takeSnapshot.call(this);
+    await wait(500);
+    return snapshot;
+  };
+  answer();
+  written = false;
+  const cleanSave = reopened.save().then((ok) => {
+    written = true;
+    return ok;
+  });
+  assert.equal(await workspace.closeDocument(reopened.id), true);
+  assert.equal(written, true, 'closing resolved after the write');
+  assert.equal(await cleanSave, true);
+  assert.deepEqual(sheets, [], 'no prompt for a clean document');
+  assert.equal(reopened.disposed, true);
+  assert.deepEqual((await dataOf(todoPath)).items.map((i) => i.text), ['Buy milk', 'Call Bob', 'Edit after the snapshot']);
+  assert.deepEqual(docsInOrder(workspace.model), [doc.id]);
+
+  step('Save all saves every document; a read-only one stops closing');
+  const todo3 = await openDoc(todoPath);
+  const other3 = await openDoc(otherPath);
+  assert.deepEqual(docsInOrder(workspace.model), [doc.id, todo3.id, other3.id]);
+  await addRowTo(doc, 'hours dirty');
+  await addTodo(todo3, 'Save all');
+  await addRowTo(other3, 'other dirty');
+  workspace.select(doc.id);
+  answer(0, 0); // Save all; OK in the "could not be saved" sheet
+  await fs.chmod(otherPath, 0o444);
+  try {
+    assert.equal(await workspace.confirmCloseAll(), false);
+  } finally {
+    await fs.chmod(otherPath, 0o644);
+  }
+  const [summary] = sheets;
+  assert.deepEqual(sheets.map((o) => o.message), [
+    'Do you want to save the changes to 3 documents?',
+    'hours.ev.html could not be saved. The file on disk was not changed.',
+  ]);
+  assert.equal(summary.detail,
+    `hours.ev.html · ${folder}\ntodo.ev.html\nhours.ev.html · other\n\nYour changes will be lost if you don't save them.`);
+  assert.deepEqual([summary.buttons, summary.defaultId, summary.cancelId], [['Save all', 'Review each…', 'Cancel'], 0, 2]);
+  assert.equal(workspace.activeDocument(), other3, 'the read-only document is active');
+  assert.deepEqual([doc.isDirty, todo3.isDirty, other3.isDirty], [false, false, true], 'the others were saved');
+  assert.equal((await dataOf(todoPath)).items.at(-1).text, 'Save all');
+  assert.equal(workspace.registry.documents.size, 3, 'nothing closed');
+  // More than ten dirty documents: ten names, then the rest as a count.
+  const twelve = Array.from({ length: 12 }, (_, i) => `d${i + 1}.ev.html`);
+  assert.equal(closeSummaryDetail(twelve),
+    [...twelve.slice(0, 10), 'and 2 more', '', "Your changes will be lost if you don't save them."].join('\n'));
+
+  step('Review each: Cancel keeps everything open');
+  await addRowTo(doc, 'hours dirty');
+  await addTodo(todo3, 'Review each');
+  answer(1, 1, 2); // Review each; Don't save (hours); Cancel (to-do list)
+  assert.equal(await workspace.confirmCloseAll(), false);
+  assert.deepEqual(sheets.map((o) => o.message), [
+    'Do you want to save the changes to 3 documents?',
+    'Do you want to save the changes you made to hours.ev.html?',
+    'Do you want to save the changes you made to todo.ev.html?',
+  ]);
+  assert.equal(workspace.activeDocument(), todo3, 'the document under review is active');
+  for (const d of [doc, todo3, other3]) {
+    assert.equal(workspace.documentById(d.id), d);
+    assert.equal(d.isDirty, true, "Don't save takes effect only when the window closes");
+  }
+
+  step('an external change to a hidden document shows no sheet');
+  answer();
+  assert.equal(doc.view.getVisible(), false, 'hours.ev.html is hidden');
+  await restyle('h1 { text-decoration: underline; }');
+  await until('updated while dirty', () => doc.status.updatedWhileDirty);
+  assert.deepEqual(sheets, [], 'no sheet');
+  assert.equal(workspace.activeDocument(), todo3, 'the active document stays');
+  // Selected, its banner pushes it down; dismissed, it moves back up.
+  workspace.select(doc.id);
+  assert.equal(doc.view.getBounds().y, 32 + 36);
+  await doc.onBannerAction('updated-while-dirty', 'dismiss');
+  assert.equal(doc.view.getBounds().y, 32);
+
+  step('the workspace is written and restored');
+  // Two panes: the to-do list gets a pane of its own on the right.
+  workspace.apply(splitPane(workspace.model, todo3.id, paneOf(workspace.model, todo3.id), 'right'));
+  workspace.select(other3.id);
+  await workspace.persist();
+  const layoutOf = (ws) => panesInOrder(ws.model).map((pane) => ({
+    tabs: pane.tabs.map((id) => ws.documentById(id).filePath),
+    selected: ws.documentById(pane.selected).filePath,
+  }));
+  assert.deepEqual(layoutOf(workspace), [
+    { tabs: [filePath, otherPath], selected: otherPath },
+    { tabs: [todoPath], selected: todoPath },
+  ]);
+  const second = new Workspace({ storeDir, workspaceFile });
+  try {
+    assert.deepEqual(await second.restore(), { failed: [] });
+    assert.deepEqual(layoutOf(second), layoutOf(workspace), 'same panes and tabs');
+    assert.equal(second.model.root.direction, 'row');
+    assert.deepEqual(second.model.root.sizes, workspace.model.root.sizes);
+    assert.equal(second.activeDocument().filePath, otherPath, 'same active document');
+    assert.deepEqual(second.model.list, workspace.model.list);
+    assert.deepEqual(second.win.getBounds(), workspace.win.getNormalBounds(), 'same window bounds');
+    assert.equal(second.win.isVisible(), true);
+    assert.equal(second.notice, null);
+  } finally {
+    second.dispose();
+  }
+
+  step('restore with missing and broken files names each once');
+  const restoreDir = path.join(dir, 'restore');
+  await fs.mkdir(restoreDir);
+  const deleted = path.join(restoreDir, 'deleted.ev.html');
+  await fs.copyFile(fixture('todo-list'), deleted);
+  await fs.rm(deleted);
+  const broken = path.join(restoreDir, 'broken.ev.html');
+  const todoParts = parseDocument(await fs.readFile(fixture('todo-list'), 'utf8')).parts;
+  await fs.writeFile(broken, buildDocument({ ...todoParts, docType: 'Not A Type' }));
+  const plain = path.join(restoreDir, 'page.html');
+  await fs.writeFile(plain, '<!doctype html><title>Plain</title><p>Plain page</p>\n');
+  const good = path.join(restoreDir, 'list.ev.html');
+  await fs.copyFile(fixture('todo-list'), good);
+  const alias = path.join(restoreDir, 'alias.ev.html'); // the same file under another name
+  await fs.symlink(good, alias);
+  const listedFile = path.join(restoreDir, 'workspace.json');
+  await fs.writeFile(listedFile, JSON.stringify({
+    version: 1,
+    window: { x: 80, y: 80, width: 900, height: 700 },
+    list: { visible: true, mode: 'list', width: 240 },
+    layout: {
+      kind: 'split',
+      direction: 'row',
+      sizes: [0.5, 0.5],
+      children: [
+        { kind: 'pane', tabs: [deleted, broken, good], selected: good },
+        { kind: 'pane', tabs: [plain, alias, good], selected: alias },
+      ],
+    },
+    active: alias,
+  }));
+  const third = new Workspace({ storeDir, workspaceFile: listedFile });
+  try {
+    const { failed } = await third.restore();
+    assert.deepEqual(failed, [
+      { path: deleted, reason: 'moved or deleted' },
+      { path: broken, reason: 'no longer follows the document specification' },
+      { path: plain, reason: 'not an EverythingApp document' },
+    ]);
+    assert.deepEqual(third.notice, { failed });
+    assert.equal(third.registry.documents.size, 1, 'the file listed twice opens once');
+    assert.deepEqual(layoutOf(third), [{ tabs: [good], selected: good }]);
+    assert.equal(third.activeDocument().filePath, good);
+    assert.equal(third.win.isVisible(), true, 'the window shows');
+    assert.deepEqual(third.win.getBounds(), { x: 80, y: 80, width: 900, height: 700 });
+  } finally {
+    third.dispose();
+  }
 
   step('all checks passed');
 }

@@ -1,74 +1,88 @@
 'use strict';
 
 const path = require('node:path');
-const { app, BaseWindow, Menu, dialog } = require('electron');
+const { app, Menu } = require('electron');
 const { registerSchemePrivileges } = require('./protocol');
-const { Registry } = require('./registry');
 const { registerIpc } = require('./ipc');
-const { openPath } = require('./open');
+const { Workspace } = require('./workspace');
 const { buildMenu } = require('./menu');
 const { pathsFromArgv } = require('./argv');
-const { attachProbe } = require('./probe');
-const { showError } = require('./errors');
+const { isolateUserData, attachProbe } = require('./probe');
 
 app.setName('EverythingApp');
 // No DNS at all: M1 needs none, and documents could leak data through DNS
 // names (dns-prefetch). M3 adds "EXCLUDE <update host>" for the update check.
 app.commandLine.appendSwitch('host-resolver-rules', 'MAP * ~NOTFOUND');
 registerSchemePrivileges();
+if (process.env.EV_PROBE) isolateUserData();
 
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
-  const registry = new Registry();
-  const storeDir = () => path.join(app.getPath('userData'), 'versions');
-  // Every open route (dialog, Finder, second instance, argv, drop) ends here.
-  const open = (p) => openPath(p, { registry, storeDir: storeDir(), allowDevTools: !app.isPackaged }).then((doc) => {
-    if (doc && process.env.EV_PROBE) attachProbe(doc);
-    return doc;
-  }).catch((err) => showError({ action: 'open', filePath: p, err }));
-  const current = () => {
-    const win = BaseWindow.getFocusedWindow();
-    return win ? registry.byWindow(win) : null;
-  };
+  let workspace = null;   // made once the app is ready
+  let started = false;    // restore() is done: paths open at once
+  const early = [];       // paths that arrived before that
+  let probeAttached = false;
 
-  async function showOpenDialog() {
-    let result;
-    try {
-      result = await dialog.showOpenDialog({
-        properties: ['openFile', 'multiSelections'],
-        filters: [{ name: 'EverythingApp documents', extensions: ['html', 'htm'] }, { name: 'All files', extensions: ['*'] }],
-      });
-    } catch (err) {
-      await showError({ action: 'show the open dialog', err });
-      return;
+  // Every open route but drops (Finder, second instance, argv) ends here:
+  // the focused pane. EV_PROBE: the probe runs in the first one opened.
+  async function open(p) {
+    const doc = await workspace.open(p);
+    if (doc && process.env.EV_PROBE && !probeAttached) {
+      probeAttached = true;
+      attachProbe(doc);
     }
-    if (!result.canceled) for (const p of result.filePaths) await open(p);
   }
 
-  registerIpc({ registry, open });
+  async function openAll(paths) {
+    for (const p of paths) await open(p);
+  }
 
   // macOS: files dropped on the dock icon or opened via Finder.
-  const early = [];
   app.on('open-file', (event, p) => {
     event.preventDefault();
-    if (app.isReady()) open(p);
+    if (started) open(p);
     else early.push(p);
   });
 
   app.on('second-instance', (_event, argv, cwd) => {
-    for (const p of pathsFromArgv(argv, { isPackaged: app.isPackaged, cwd })) open(p);
+    const paths = pathsFromArgv(argv, { isPackaged: app.isPackaged, cwd });
+    if (!started) {
+      early.push(...paths);
+      return;
+    }
+    if (workspace.win.isMinimized()) workspace.win.restore();
+    workspace.win.focus();
+    openAll(paths);
   });
+
+  // Quitting goes through the close summary; workspace.quit() exits once it
+  // is confirmed.
+  app.on('before-quit', (event) => {
+    if (!workspace || workspace.quitConfirmed) return;
+    event.preventDefault();
+    workspace.quit();
+  });
+
+  app.on('window-all-closed', () => app.quit());
 
   app.whenReady().then(async () => {
-    Menu.setApplicationMenu(buildMenu({ current, showOpenDialog, isDev: !app.isPackaged }));
-    const paths = [...early, ...pathsFromArgv(process.argv, { isPackaged: app.isPackaged, cwd: process.cwd() })];
-    for (const p of paths) await open(p);
-    if (paths.length === 0) await showOpenDialog();
-    if (registry.documents.size === 0 && process.platform !== 'darwin') app.quit();
-  });
-
-  app.on('window-all-closed', () => {
-    if (process.platform !== 'darwin' || process.env.EV_PROBE) app.quit();
+    const userData = app.getPath('userData');
+    workspace = new Workspace({
+      storeDir: path.join(userData, 'versions'),
+      workspaceFile: path.join(userData, 'workspace.json'),
+      allowDevTools: !app.isPackaged,
+    });
+    workspace.menu = buildMenu({ workspace, isDev: !app.isPackaged });
+    Menu.setApplicationMenu(workspace.menu);
+    registerIpc({ workspace });
+    try {
+      await workspace.restore();
+    } catch (err) {
+      await workspace.showError({ action: 'restore the workspace', err });
+    }
+    started = true;
+    // No open dialog: the empty state offers Open… (Task 10).
+    await openAll([...early.splice(0), ...pathsFromArgv(process.argv, { isPackaged: app.isPackaged, cwd: process.cwd() })]);
   });
 }
