@@ -12,6 +12,7 @@ const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
 const assert = require('node:assert/strict');
+const { isDeepStrictEqual } = require('node:util');
 const { app, ipcMain, BaseWindow } = require('electron');
 const { registerSchemePrivileges } = require('../src/protocol');
 const { registerIpc } = require('../src/ipc');
@@ -578,7 +579,7 @@ async function run(dir) {
   await fs.writeFile(listedFile, JSON.stringify({
     version: 1,
     window: { x: 80, y: 80, width: 900, height: 700 },
-    list: { visible: true, mode: 'list', width: 240 },
+    list: { visible: false, mode: 'list', width: 240 }, // shown anyway: it holds the notice
     layout: {
       kind: 'split',
       direction: 'row',
@@ -604,9 +605,120 @@ async function run(dir) {
     assert.equal(third.activeDocument().filePath, good);
     assert.equal(third.win.isVisible(), true, 'the window shows');
     assert.deepEqual(third.win.getBounds(), { x: 80, y: 80, width: 900, height: 700 });
+    // The host UI names each one at the top of the list, which shows while it does.
+    assert.equal(third.model.list.visible, true);
+    await third.hostUi.ready;
+    const noticeItems = () => third.hostUi.view.webContents.executeJavaScript(
+      '[...document.querySelectorAll("#notice li")].map((li) => li.textContent)');
+    await until('the host UI shows the notice', async () => (await noticeItems()).length === 3);
+    assert.deepEqual(await noticeItems(), [
+      'deleted.ev.html — moved or deleted',
+      'broken.ev.html — no longer follows the document specification',
+      'page.html — not an EverythingApp document',
+    ]);
   } finally {
     third.dispose();
   }
+
+  // ---------- The host UI ----------
+  const { hostUi } = workspace;
+  const ui = (code) => hostUi.view.webContents.executeJavaScript(code);
+  const tabSelector = (d) => `.strip .tab[data-doc-id="${d.id}"]`;
+  const clickInUi = (selector) => ui(`document.querySelector(${JSON.stringify(selector)}).click()`);
+
+  step('the host UI lists every document and draws a tab per document');
+  await hostUi.ready;
+  assert.equal(workspace.win.contentView.children[0], hostUi.view, 'the host UI lies beneath the documents');
+  const contentSize = workspace.win.getContentBounds();
+  assert.deepEqual(hostUi.view.getBounds(), { x: 0, y: 0, width: contentSize.width, height: contentSize.height });
+  // p1: hours, other hours | p2: to-do list; all three dirty
+  const strips = () => ui(`[...document.querySelectorAll('.strip')].map((s) =>
+    [s.dataset.paneId, [...s.querySelectorAll('.tab')].map((t) => t.dataset.docId)])`);
+  const expectedStrips = panesInOrder(workspace.model).map((pane) => [pane.id, pane.tabs]);
+  assert.deepEqual(expectedStrips.map(([, tabs]) => tabs), [[doc.id, other3.id], [todo3.id]]);
+  await until('the host UI draws the tabs', async () => isDeepStrictEqual(await strips(), expectedStrips));
+  const entries = await ui(`[...document.querySelectorAll('#entries .entry')].map((e) =>
+    [e.dataset.docId, e.querySelector('.label').textContent, !!e.querySelector('.dirty')])`);
+  assert.deepEqual(entries, [
+    [doc.id, `hours.ev.html · ${folder}`, true],
+    [other3.id, 'hours.ev.html · other', true],
+    [todo3.id, 'todo.ev.html', true],
+  ]);
+  assert.equal(await ui('document.querySelectorAll("#entries .separator").length'), 1, 'one separator between two panes');
+  assert.deepEqual([doc, other3, todo3].map((d) => workspace.docTypeOf(d)), ['hours-sheet', 'hours-sheet', 'todo-list']);
+  assert.equal(await ui('document.querySelectorAll(".divider").length'), 1);
+
+  step('clicking a tab selects the document');
+  assert.equal(activeDocId(workspace.model), other3.id);
+  await clickInUi(tabSelector(doc));
+  await until('the clicked tab is selected', () => activeDocId(workspace.model) === doc.id);
+  assert.equal(doc.view.getVisible(), true);
+  assert.equal(other3.view.getVisible(), false);
+  await until('the host UI marks it selected',
+    async () => (await ui(`document.querySelector('${tabSelector(doc)}').classList.contains('selected')`)) === true);
+
+  step('a banner appears for a hidden document and its action works');
+  answer();
+  assert.equal(other3.view.getVisible(), false, 'the other hours sheet is hidden');
+  assert.equal(other3.isDirty, true);
+  await restyle('h1 { word-spacing: 2px; }', otherPath);
+  await until('updated while dirty', () => other3.status.updatedWhileDirty);
+  const badgeOf = (d) => ui(`document.querySelector('${tabSelector(d)} .badge')?.title ?? null`);
+  await until('its tab shows the badge', async () => (await badgeOf(other3)) === 'Updated on disk');
+  assert.equal(activeDocId(workspace.model), doc.id, 'the active document stays');
+  await clickInUi(tabSelector(other3));
+  await until('selected', () => activeDocId(workspace.model) === other3.id);
+  const bannerRow = `.banners[data-pane-id="${paneOf(workspace.model, other3.id)}"]`;
+  await until('the banner shows', async () => (await ui(`document.querySelector('${bannerRow} .banner[data-kind="updated-while-dirty"] .message')?.textContent`))
+    === 'This document was updated on disk. Your data is unsaved.');
+  assert.equal(other3.view.getBounds().y, 32 + 36, 'the banner pushes the document down');
+  const generation3 = other3.generation;
+  await ui(`[...document.querySelectorAll('${bannerRow} button')].find((b) => b.textContent === 'Reload and discard my changes').click()`);
+  await until('reloaded without the unsaved changes',
+    () => other3.generation === generation3 + 1 && !other3.isDirty && !other3.status.updatedWhileDirty);
+  await until('the banner goes', async () => (await ui(`document.querySelectorAll('${bannerRow} .banner').length`)) === 0);
+  assert.equal(other3.view.getBounds().y, 32);
+  assert.equal(await badgeOf(other3), null);
+  assert.deepEqual(sheets, [], 'no sheet');
+
+  step('a document cannot send host-UI intents');
+  const intentFrom = (senderId, payload) => ipcMain.emit('ui:intent', { sender: { id: senderId } }, payload);
+  intentFrom(todo3.webContentsId, { type: 'close', docId: todo3.id });
+  intentFrom(todo3.webContentsId, { type: 'select', docId: doc.id });
+  intentFrom(todo3.webContentsId, { type: 'dismiss-notice' });
+  await wait(300);
+  assert.equal(workspace.documentById(todo3.id), todo3, 'still open');
+  assert.deepEqual(sheets, [], 'not even its close prompt');
+  assert.equal(activeDocId(workspace.model), other3.id, 'nothing was selected');
+  // Nor can the host UI act as a document.
+  const changesBefore = [doc, other3, todo3].map((d) => d.latestChange);
+  ipcMain.emit('doc:dirty', { sender: { id: hostUi.webContentsId } }, { loadId: 'x', counter: 1e6 });
+  assert.deepEqual([doc, other3, todo3].map((d) => d.latestChange), changesBefore);
+  // The same intent from the host UI is carried out.
+  intentFrom(hostUi.webContentsId, { type: 'select', docId: doc.id });
+  assert.equal(activeDocId(workspace.model), doc.id);
+
+  step('the empty state appears when the last document closes');
+  answer(1, 1); // Don't save (hours, to-do list); the other hours sheet is clean
+  for (const d of workspace.openDocuments()) {
+    await clickInUi(`${tabSelector(d)} .close`);
+    await until(`${path.basename(d.filePath)} closed`, () => d.disposed);
+  }
+  assert.deepEqual(sheets.map((o) => o.message), [
+    'Do you want to save the changes you made to hours.ev.html?',
+    'Do you want to save the changes you made to todo.ev.html?',
+  ]);
+  assert.equal(workspace.registry.documents.size, 0);
+  await until('the empty state shows', async () => (await ui('document.getElementById("empty").hidden')) === false);
+  assert.equal(await ui('document.querySelectorAll(".strip .tab, #entries .entry").length'), 0);
+  assert.equal(await ui('document.querySelector("#empty button").textContent'), 'Open…');
+  assert.match(await ui('document.getElementById("empty").textContent'), /Drop a document here/);
+  const emptyRect = await ui(`(() => {
+    const r = document.getElementById('empty').getBoundingClientRect();
+    return { x: r.x, y: r.y, width: r.width, height: r.height };
+  })()`);
+  assert.deepEqual(emptyRect, workspace.layout.panes[0].document, "in the single pane's document area");
+  assert.equal(workspace.win.getTitle(), 'EverythingApp');
 
   step('all checks passed');
 }

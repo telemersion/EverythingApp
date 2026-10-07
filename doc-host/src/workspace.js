@@ -12,8 +12,11 @@ const {
   toWorkspaceFile, pathsInFile, modelFromWorkspaceFile, fitBounds, readWorkspaceFile, writeWorkspaceFile,
 } = require('./workspace-file');
 const { readDocumentFile } = require('./open');
+const { parseDocument } = require('./frame');
 const { Document } = require('./document');
 const { Registry } = require('./registry');
+const { HostUi } = require('./host-ui');
+const { buildUiState } = require('./ui-state');
 const { showErrorSheet } = require('./errors');
 const { updateMenu } = require('./menu');
 
@@ -36,13 +39,26 @@ function restoreReason(result) {
   return result.code === 'ENOENT' ? 'moved or deleted' : `could not be read: ${result.message}`;
 }
 
+// What the error sheet says when an intent from the host UI fails.
+const INTENT_ACTIONS = {
+  select: 'show',
+  close: 'close',
+  banner: 'carry out the banner action for',
+  'open-dialog': 'show the open dialog',
+  'open-files': 'open the dropped files',
+  list: 'change the document list',
+  'resize-split': 'resize the panes',
+  'dismiss-notice': 'dismiss the notice',
+};
+
 // The one window of the host. It holds every open document as a tab in a
 // pane (workspace-model.js), lays out their views (layout.js), shows every
 // prompt as a sheet on itself, and asks before quitting with unsaved
 // changes. Each pane shows its selected document; the others stay hidden.
-// The host UI (tab strips, banner rows, document list; Task 10) will draw in
-// the space the layout keeps free; until then that space is blank and tabs
-// are switched from the menu.
+// The host UI (host-ui.js) lies beneath the documents and draws the list,
+// tab strips, banner rows and empty state in the space the layout keeps
+// free; it gets the state after every apply() and reports intents
+// (handleIntent).
 class Workspace {
   constructor({ storeDir, workspaceFile, allowDevTools = false }) {
     this.storeDir = storeDir;
@@ -51,9 +67,9 @@ class Workspace {
     this.registry = new Registry();
     this.model = wm.createModel();
     this.layout = null;          // the last computeLayout()
-    this.hostUi = null;          // Task 10
     this.menu = null;            // the application menu, if one is installed (menu.js)
-    this.notice = null;          // { failed } from restore(), for the host UI (Task 10)
+    this.notice = null;          // { failed } from restore(), shown by the host UI until dismissed
+    this.docTypes = new WeakMap(); // Document → { html, docType } of its running page
     this.prompting = false;      // a sheet is open
     this.restoring = false;
     this.quitting = null;        // the running quit()
@@ -68,6 +84,9 @@ class Workspace {
       event.preventDefault();
       this.quit();
     });
+    // The first child of the window; document views go above it.
+    this.hostUi = new HostUi({ win: this.win, onIntent: (intent) => this.handleIntent(intent), allowDevTools });
+    this.hostUi.ready.catch((err) => this.showError({ action: 'show the document list and tabs', err }));
   }
 
   // ---------- Queries ----------
@@ -164,7 +183,7 @@ class Workspace {
     });
     this.registry.add(doc);
     doc.view.setVisible(false);
-    // Document views go above the host-UI view (Task 10), which comes first.
+    // Document views go above the host-UI view, which comes first.
     this.win.contentView.addChildView(doc.view);
     // Clicking into a document focuses its pane.
     doc.view.webContents.on('focus', () => {
@@ -201,14 +220,16 @@ class Workspace {
 
   // ---------- Model and layout ----------
 
-  // Sets the model, lays out the views, updates the title and the menu. The
-  // host UI (Task 10) will be drawn here too.
+  // Sets the model, lays out the views, updates the title and the menu, and
+  // sends the host UI its new state. While the restore notice exists, the
+  // list that holds it is shown.
   apply(model) {
-    this.model = model;
+    this.model = this.notice && !model.list.visible ? wm.setList(model, { visible: true }) : model;
     if (this.win.isDestroyed()) return;
     this.layoutViews();
     this.updateTitle();
     if (this.menu) updateMenu(this.menu, this);
+    this.pushUiState();
   }
 
   // apply(), then the keyboard goes to the active document.
@@ -229,6 +250,7 @@ class Workspace {
       return bannerRowHeight(describeStatus(doc.status, { name: doc.name, filePath: doc.filePath }).banners.length);
     };
     this.layout = computeLayout(this.model, { width, height }, { bannerHeight });
+    this.hostUi.view.setBounds({ x: 0, y: 0, width, height });
     for (const { paneId, document: rect } of this.layout.panes) {
       const pane = wm.findNode(this.model, paneId);
       for (const docId of pane.tabs) {
@@ -274,6 +296,70 @@ class Workspace {
 
   setList(changes) {
     this.apply(wm.setList(this.model, changes));
+  }
+
+  // ---------- Host UI ----------
+
+  // The document type of the page a document runs; read again only after
+  // the page was replaced.
+  docTypeOf(doc) {
+    let known = this.docTypes.get(doc);
+    if (!known || known.html !== doc.html) {
+      known = { html: doc.html, docType: parseDocument(doc.html).parts?.docType ?? '' };
+      this.docTypes.set(doc, known);
+    }
+    return known.docType;
+  }
+
+  pushUiState() {
+    this.hostUi.pushState(buildUiState({
+      model: this.model,
+      layout: this.layout,
+      documents: this.openDocuments().map((doc) => ({
+        id: doc.id, path: doc.filePath, docType: this.docTypeOf(doc), status: doc.status,
+      })),
+      notice: this.notice,
+      platform: process.platform,
+    }));
+  }
+
+  // An intent from the host UI, checked by ipc.js (ui-intents.js). Anything
+  // that goes wrong is shown as an error sheet. Never rejects.
+  async handleIntent(intent) {
+    const doc = intent.docId === undefined ? null : this.documentById(intent.docId);
+    try {
+      switch (intent.type) {
+        case 'select':
+          this.select(intent.docId);
+          break;
+        case 'close':
+          await this.closeDocument(intent.docId);
+          break;
+        case 'banner':
+          if (doc) await doc.onBannerAction(intent.kind, intent.action);
+          break;
+        case 'open-dialog':
+          await this.openDialog(); // into the focused pane
+          break;
+        case 'open-files':
+          for (const p of intent.paths) await this.open(p);
+          break;
+        case 'list':
+          this.setList({ visible: intent.visible, mode: intent.mode, width: intent.width });
+          break;
+        case 'resize-split':
+          this.apply(wm.resizeSplit(this.model, intent.splitId, intent.sizes));
+          break;
+        case 'dismiss-notice':
+          this.notice = null;
+          this.apply(this.model);
+          break;
+        default:
+          // move-tab, split, drag: Task 11
+      }
+    } catch (err) {
+      await this.showError({ action: INTENT_ACTIONS[intent.type] || 'do that with', filePath: doc?.filePath, err });
+    }
   }
 
   // ---------- Sheets ----------
@@ -382,9 +468,10 @@ class Workspace {
     app.exit(0);
   }
 
-  // Closes every document and the window, without asking.
+  // Closes every document, the host UI and the window, without asking.
   dispose() {
     for (const doc of [...this.registry.documents]) this.forget(doc);
+    this.hostUi.dispose();
     if (!this.win.isDestroyed()) this.win.destroy();
   }
 
@@ -420,6 +507,9 @@ class Workspace {
     } finally {
       this.restoring = false;
       this.notice = failed.length > 0 ? { failed } : null;
+      // The window shows once the host UI can draw in it (a failure to load
+      // it is reported by the constructor).
+      await this.hostUi.ready.catch(() => {});
       if (!this.win.isDestroyed()) this.win.show();
     }
     this.applyAndFocus(this.model);

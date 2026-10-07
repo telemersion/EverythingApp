@@ -357,6 +357,23 @@ body { font: 14px/1.5 system-ui, sans-serif; margin: 24px; }
   const shadowPointer = getComputedStyle(shadowFrame).pointerEvents;
   report('iframes in shadow roots receive no pointer input', shadowPointer === 'none', shadowPointer);
 
+  // The host UI (document list, tabs, banners) is out of reach: no bridge to
+  // it, no way to load or open its page, no native dialog that could pass for
+  // a host prompt, and no fullscreen that could cover it.
+  report('no host-UI bridge', typeof window.evUi === 'undefined');
+  await blockedFetch('fetch host UI', 'ev-ui://host/index.html');
+  report('window.open host UI', !window.open('ev-ui://host/index.html'));
+  const started = Date.now();
+  alert('probe');
+  report('alert does nothing', Date.now() - started < 1000);
+  report('confirm returns false', confirm('probe') === false);
+  try {
+    await document.documentElement.requestFullscreen();
+    report('fullscreen refused', false);
+  } catch {
+    report('fullscreen refused', true);
+  }
+
   const before = location.href;
   location.href = 'https://example.com/';
   await new Promise((resolve) => setTimeout(resolve, 1000));

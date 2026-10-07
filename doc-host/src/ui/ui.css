@@ -1,0 +1,390 @@
+/* The host UI: document list, tab strips, banner rows, dividers, empty state.
+   Positions and sizes come from ui.js (CSSOM); everything else is here. */
+
+:root {
+  color-scheme: light dark;
+  --bg: #e9e9eb;
+  --list-bg: #f4f4f5;
+  --strip-bg: #e2e2e5;
+  --tab-selected-bg: #ffffff;
+  --text: #1d1d1f;
+  --text-dim: #6b6b70;
+  --border: #cfcfd4;
+  --hover: rgba(0, 0, 0, 0.06);
+  --active: rgba(10, 99, 209, 0.14);
+  --accent: #0a63d1;
+  --banner-bg: #fff5d1;
+  --banner-border: #e3cf86;
+  --button-bg: #ffffff;
+  --button-border: #c4c4ca;
+  --button-hover: #f2f2f4;
+  --red: #c42b1c;
+  --orange: #b35c00;
+  --grey: #6b6b70;
+  --blue: #0a63d1;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #1c1c1e;
+    --list-bg: #232326;
+    --strip-bg: #2a2a2d;
+    --tab-selected-bg: #3a3a3e;
+    --text: #ececef;
+    --text-dim: #a1a1a8;
+    --border: #3d3d42;
+    --hover: rgba(255, 255, 255, 0.07);
+    --active: rgba(77, 148, 255, 0.24);
+    --accent: #4d94ff;
+    --banner-bg: #3b3420;
+    --banner-border: #5e5230;
+    --button-bg: #3a3a3e;
+    --button-border: #55555b;
+    --button-hover: #46464b;
+    --red: #ff6b5e;
+    --orange: #ffa64d;
+    --grey: #a1a1a8;
+    --blue: #4d94ff;
+  }
+}
+
+[hidden] {
+  display: none !important;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font: 13px/1.3 system-ui, -apple-system, "Segoe UI", sans-serif;
+  cursor: default;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+button {
+  font: inherit;
+  color: var(--text);
+  background: var(--button-bg);
+  border: 1px solid var(--button-border);
+  border-radius: 5px;
+  padding: 2px 10px;
+}
+
+button:hover {
+  background: var(--button-hover);
+}
+
+button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* Badges: one glyph in a coloured disc, most urgent first. */
+.badge {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  color: #fff;
+  background: var(--grey);
+}
+
+.badge[data-kind="missing"],
+.badge[data-kind="non-conforming"] {
+  background: var(--red);
+}
+
+.badge[data-kind="data-conflict"],
+.badge[data-kind="updated-while-dirty"] {
+  background: var(--orange);
+}
+
+.badge[data-kind="kit-update"] {
+  background: var(--blue);
+}
+
+/* ---------- Document list ---------- */
+
+.list {
+  position: absolute;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  background: var(--list-bg);
+  border-right: 1px solid var(--border);
+}
+
+.notice {
+  flex: none;
+  margin: 8px;
+  padding: 8px 10px;
+  background: var(--banner-bg);
+  border: 1px solid var(--banner-border);
+  border-radius: 6px;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.notice p {
+  margin: 0 0 4px;
+}
+
+.notice ul {
+  margin: 0 0 8px;
+  padding-left: 16px;
+}
+
+.notice li {
+  overflow-wrap: anywhere;
+}
+
+.entries {
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px 0;
+}
+
+.entry {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  height: 26px;
+  padding: 0 12px;
+  white-space: nowrap;
+}
+
+.entry:hover {
+  background: var(--hover);
+}
+
+.entry.active {
+  background: var(--active);
+}
+
+.entry .label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.entry.selected .label {
+  font-weight: 600;
+}
+
+.entry .dirty {
+  color: var(--text-dim);
+}
+
+.separator {
+  height: 1px;
+  margin: 4px 0;
+  background: var(--border);
+}
+
+.list-handle {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 4px;
+  cursor: col-resize;
+}
+
+.list-handle:hover,
+.list-handle.dragging {
+  background: var(--accent);
+}
+
+/* ---------- Tab strips ---------- */
+
+.strip {
+  position: absolute;
+  box-sizing: border-box;
+  display: flex;
+  align-items: stretch;
+  overflow-x: auto;
+  overflow-y: hidden;
+  background: var(--strip-bg);
+  border-bottom: 1px solid var(--border);
+  scrollbar-width: none;
+}
+
+.strip::-webkit-scrollbar {
+  display: none;
+}
+
+.tab {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex: 0 1 200px;
+  min-width: 90px;
+  padding: 0 5px 0 10px;
+  border-right: 1px solid var(--border);
+  color: var(--text-dim);
+}
+
+.tab:hover {
+  background: var(--hover);
+}
+
+.tab.selected {
+  background: var(--tab-selected-bg);
+  color: var(--text);
+}
+
+.strip.focused .tab.selected {
+  box-shadow: inset 0 2px 0 var(--accent);
+}
+
+.tab .label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tab .close {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 15px;
+  line-height: 20px;
+  text-align: center;
+}
+
+.tab .close:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+/* Unsaved: a dot where the close button is, until the pointer is over the tab. */
+.tab .close .dot,
+.tab.dirty .close .x,
+.tab.dirty:hover .close .dot {
+  display: none;
+}
+
+.tab.dirty .close .dot,
+.tab.dirty:hover .close .x {
+  display: inline;
+}
+
+/* ---------- Banner rows ---------- */
+
+.banners {
+  position: absolute;
+  box-sizing: border-box;
+  overflow: hidden;
+  background: var(--banner-bg);
+}
+
+.banner {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 36px;
+  padding: 0 8px 0 12px;
+  border-bottom: 1px solid var(--banner-border);
+}
+
+.banner .message {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.banner button {
+  flex: none;
+}
+
+.banner.fading {
+  animation-name: ev-fade;
+  animation-timing-function: cubic-bezier(0.7, 0, 1, 1);
+  animation-fill-mode: forwards;
+}
+
+@keyframes ev-fade {
+  from {
+    opacity: 1;
+  }
+
+  to {
+    opacity: 0;
+  }
+}
+
+.more {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  height: 24px;
+  padding: 0 12px;
+  font-size: 12px;
+  color: var(--text-dim);
+  border-bottom: 1px solid var(--banner-border);
+}
+
+/* ---------- Dividers ---------- */
+
+.divider {
+  position: absolute;
+  background: var(--border);
+}
+
+.divider.row {
+  cursor: col-resize;
+}
+
+.divider.column {
+  cursor: row-resize;
+}
+
+.divider:hover,
+.divider.dragging {
+  background: var(--accent);
+}
+
+/* ---------- Empty state ---------- */
+
+.empty {
+  position: absolute;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  color: var(--text-dim);
+}
+
+.empty p {
+  margin: 0;
+}
+
+.empty button {
+  font-size: 14px;
+  padding: 6px 18px;
+}

@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>EverythingApp</title>
+  <link rel="stylesheet" href="ui.css">
+  <script src="ui.js" defer></script>
+</head>
+<body>
+  <nav id="list" class="list" aria-label="Documents" hidden>
+    <section id="notice" class="notice" role="status" hidden>
+      <p id="notice-message"></p>
+      <ul id="notice-items"></ul>
+      <button id="notice-ok" type="button">OK</button>
+    </section>
+    <div id="entries" class="entries"></div>
+    <div id="list-handle" class="list-handle" title="Drag to resize the list"></div>
+  </nav>
+  <div id="panes"></div>
+  <div id="dividers"></div>
+  <div id="empty" class="empty" hidden>
+    <button id="open" type="button">Open…</button>
+    <p>Drop a document here</p>
+  </div>
+</body>
+</html>

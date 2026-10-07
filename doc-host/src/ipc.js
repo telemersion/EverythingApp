@@ -2,10 +2,14 @@
 
 const { ipcMain } = require('electron');
 const { paneOf } = require('./workspace-model');
+const { parseIntent, intentIds } = require('./ui-intents');
 
-// Routes messages from the preload to their document. The sender decides
-// which document a message belongs to; messages never carry a target path.
-// The document checks the load tag of every message but doc:hello.
+// Routes messages from the preloads. The sender decides where a message
+// belongs; messages never carry a target path. doc:* go to the document
+// whose view sent them (anything else is ignored, the host UI included), and
+// the document checks the load tag of every message but doc:hello. ui:intent
+// is accepted only from the host-UI view (a document can never send one),
+// and only as an intent that parseIntent accepts.
 function registerIpc({ workspace }) {
   const documentOf = (event) => workspace.registry.bySender(event.sender.id);
   ipcMain.on('doc:hello', (event, loadId) => documentOf(event)?.onHello(loadId));
@@ -18,6 +22,12 @@ function registerIpc({ workspace }) {
     for (const p of doc.droppedPaths(payload)) {
       await workspace.open(p, { paneId: paneOf(workspace.model, doc.id) ?? undefined });
     }
+  });
+  ipcMain.on('ui:intent', (event, payload) => {
+    const { hostUi } = workspace;
+    if (!hostUi || event.sender.id !== hostUi.webContentsId) return;
+    const intent = parseIntent(payload, intentIds(workspace.model));
+    if (intent) hostUi.onIntent(intent);
   });
 }
 

@@ -50,8 +50,11 @@ function buildMenu({ workspace, isDev }) {
           label: 'Developer Tools',
           accelerator: isMac ? 'Alt+Cmd+I' : 'Ctrl+Shift+I',
           click: withDoc('open the developer tools for', (doc) => doc.view.webContents.toggleDevTools()),
+        }, {
+          id: 'host-ui-dev-tools',
+          label: 'Host UI Developer Tools',
+          click: () => run('open the developer tools for the host UI', () => workspace.hostUi.view.webContents.toggleDevTools()),
         }] : []),
-        // Host UI Developer Tools comes in Task 10.
       ],
     },
     {
