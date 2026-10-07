@@ -2,6 +2,12 @@
 
 const { Menu, shell } = require('electron');
 
+// Docked DevTools would sit inside the view's own bounds (the host UI lies beneath the documents).
+function toggleDetachedDevTools(contents) {
+  if (contents.isDevToolsOpened()) contents.closeDevTools();
+  else contents.openDevTools({ mode: 'detach' });
+}
+
 // Ids of the items that need an active document.
 const DOCUMENT_ITEMS = ['save', 'close', 'reveal', 'reload', 'dev-tools'];
 
@@ -49,11 +55,11 @@ function buildMenu({ workspace, isDev }) {
           id: 'dev-tools',
           label: 'Developer Tools',
           accelerator: isMac ? 'Alt+Cmd+I' : 'Ctrl+Shift+I',
-          click: withDoc('open the developer tools for', (doc) => doc.view.webContents.toggleDevTools()),
+          click: withDoc('open the developer tools for', (doc) => toggleDetachedDevTools(doc.view.webContents)),
         }, {
           id: 'host-ui-dev-tools',
           label: 'Host UI Developer Tools',
-          click: () => run('open the developer tools for the host UI', () => workspace.hostUi.view.webContents.toggleDevTools()),
+          click: () => run('open the developer tools for the host UI', () => toggleDetachedDevTools(workspace.hostUi.view.webContents)),
         }] : []),
       ],
     },
