@@ -1,0 +1,4 @@
+body { font: 15px/1.45 system-ui, sans-serif; margin: 24px; }
+textarea { display: block; width: 100%; min-height: 160px; font: inherit; margin-bottom: 12px; }
+#status { margin-left: 12px; color: #66767a; }
+#status.dirty { color: #a35a00; font-weight: 600; }

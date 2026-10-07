@@ -43,7 +43,7 @@ main { max-width: 560px; margin: 0 auto; }
 header { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; margin-bottom: 16px; }
 h1 { font-size: 26px; font-weight: 650; margin: 0; }
 #status { color: var(--muted); font-size: 13px; }
-#status.dirty { color: var(--warn); font-weight: 600; }
+[data-ev-state="unsaved"] { color: var(--warn); font-weight: 600; }
 
 form { display: flex; gap: 8px; margin-bottom: 14px; }
 input, button { font: inherit; color: inherit; }
@@ -74,13 +74,13 @@ li button { border: 0; background: transparent; color: var(--muted); font-size: 
 <body>
   <div id="ev-app"></div>
   <script type="application/json" id="ev-data">{"items":[]}</script>
-  <script id="ev-kit" data-kit-version="1.0.0">
-/* EverythingApp kit 1.0.0 (host API v1). Part of the document frame:
+  <script id="ev-kit" data-kit-version="1.1.0">
+/* EverythingApp kit 1.1.0 (host API v1). Part of the document frame:
    the host checks this exact text by hash. Do not edit it in a document. */
 (function () {
   'use strict';
 
-  var KIT_VERSION = '1.0.0';
+  var KIT_VERSION = '1.1.0';
   var kitText = document.currentScript.textContent;
   var styleText = document.getElementById('ev-style').textContent;
   var docTypeMeta = document.querySelector('meta[name="ev-doc-type"]');
@@ -225,9 +225,19 @@ li button { border: 0; background: transparent; color: var(--muted); font-size: 
       });
     }
 
+    // Elements the document marks data-ev-fallback="status" show the save state.
+    function showFallbackStatus() {
+      var els = document.querySelectorAll('[data-ev-fallback="status"]');
+      for (var i = 0; i < els.length; i++) {
+        els[i].textContent = dirty ? 'Unsaved changes' : 'Saved';
+        els[i].setAttribute('data-ev-state', dirty ? 'unsaved' : 'saved');
+      }
+    }
+
     function setDirty(value) {
       if (dirty === value) return;
       dirty = value;
+      showFallbackStatus();
       onDirtyChange(value);
     }
 
@@ -242,6 +252,10 @@ li button { border: 0; background: transparent; color: var(--muted); font-size: 
     if (host) {
       // The host owns saving, the dirty marker and the close prompt.
       host.onSaveRequest(serialize);
+      // Fallback UI the document marks is hidden here; saving rebuilds from the frame.
+      var hide = document.createElement('style');
+      hide.textContent = '[data-ev-fallback] { display: none !important; }';
+      document.head.append(hide);
     } else {
       window.addEventListener('keydown', function (e) {
         if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
@@ -252,6 +266,14 @@ li button { border: 0; background: transparent; color: var(--muted); font-size: 
       window.addEventListener('beforeunload', function (e) {
         if (dirty) { e.preventDefault(); e.returnValue = ''; }
       });
+      document.addEventListener('click', function (e) {
+        var target = e.target;
+        if (target && target.closest && target.closest('[data-ev-fallback="save"]')) {
+          e.preventDefault();
+          save();
+        }
+      });
+      document.addEventListener('DOMContentLoaded', showFallbackStatus);
     }
 
     return Object.freeze({
@@ -279,22 +301,23 @@ li button { border: 0; background: transparent; color: var(--muted); font-size: 
 (function () {
   'use strict';
 
-  const doc = EvKit.init({ onDirtyChange: (dirty) => showStatus(dirty) });
+  const doc = EvKit.init();
   const data = doc.data;
   data.items = Array.isArray(data.items) ? data.items : [];
 
-  // In the host, the host owns saving: no Save button and no status line.
+  // The Save button and status are marked data-ev-fallback: the kit hides them in the host
+  // and wires them in a browser.
   const app = document.getElementById('ev-app');
   app.innerHTML = `
     <main>
       <header>
         <h1>To-do list</h1>
-        ${doc.hosted ? '' : '<span id="status">Saved</span>'}
+        <span id="status" data-ev-fallback="status">Saved</span>
       </header>
       <form id="new">
         <input id="text" type="text" placeholder="New item" aria-label="New item" autocomplete="off">
         <button id="add" class="primary">Add</button>
-        ${doc.hosted ? '' : '<button id="save" type="button">Save</button>'}
+        <button id="save" type="button" data-ev-fallback="save">Save</button>
       </form>
       <ul id="items"></ul>
       <p id="empty" hidden>Nothing to do yet.</p>
@@ -303,13 +326,6 @@ li button { border: 0; background: transparent; color: var(--muted); font-size: 
   `;
 
   const $ = (id) => document.getElementById(id);
-
-  function showStatus(dirty) {
-    const s = $('status');
-    if (!s) return;
-    s.textContent = dirty ? 'Unsaved changes' : 'Saved';
-    s.classList.toggle('dirty', dirty);
-  }
 
   function showCount() {
     const open = data.items.filter((item) => !item.done).length;
@@ -360,8 +376,6 @@ li button { border: 0; background: transparent; color: var(--muted); font-size: 
     $('text').value = '';
     update();
   });
-
-  if (!doc.hosted) $('save').addEventListener('click', () => doc.save());
 
   data.items.forEach((item) => $('items').append(makeItem(item)));
   showCount();

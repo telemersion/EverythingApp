@@ -35,7 +35,7 @@ main { max-width: 560px; margin: 0 auto; }
 header { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; margin-bottom: 16px; }
 h1 { font-size: 26px; font-weight: 650; margin: 0; }
 #status { color: var(--muted); font-size: 13px; }
-#status.dirty { color: var(--warn); font-weight: 600; }
+[data-ev-state="unsaved"] { color: var(--warn); font-weight: 600; }
 
 form { display: flex; gap: 8px; margin-bottom: 14px; }
 input, button { font: inherit; color: inherit; }

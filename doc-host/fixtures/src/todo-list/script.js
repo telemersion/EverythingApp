@@ -3,22 +3,23 @@
 (function () {
   'use strict';
 
-  const doc = EvKit.init({ onDirtyChange: (dirty) => showStatus(dirty) });
+  const doc = EvKit.init();
   const data = doc.data;
   data.items = Array.isArray(data.items) ? data.items : [];
 
-  // In the host, the host owns saving: no Save button and no status line.
+  // The Save button and status are marked data-ev-fallback: the kit hides them in the host
+  // and wires them in a browser.
   const app = document.getElementById('ev-app');
   app.innerHTML = `
     <main>
       <header>
         <h1>To-do list</h1>
-        ${doc.hosted ? '' : '<span id="status">Saved</span>'}
+        <span id="status" data-ev-fallback="status">Saved</span>
       </header>
       <form id="new">
         <input id="text" type="text" placeholder="New item" aria-label="New item" autocomplete="off">
         <button id="add" class="primary">Add</button>
-        ${doc.hosted ? '' : '<button id="save" type="button">Save</button>'}
+        <button id="save" type="button" data-ev-fallback="save">Save</button>
       </form>
       <ul id="items"></ul>
       <p id="empty" hidden>Nothing to do yet.</p>
@@ -27,13 +28,6 @@
   `;
 
   const $ = (id) => document.getElementById(id);
-
-  function showStatus(dirty) {
-    const s = $('status');
-    if (!s) return;
-    s.textContent = dirty ? 'Unsaved changes' : 'Saved';
-    s.classList.toggle('dirty', dirty);
-  }
 
   function showCount() {
     const open = data.items.filter((item) => !item.done).length;
@@ -84,8 +78,6 @@
     $('text').value = '';
     update();
   });
-
-  if (!doc.hosted) $('save').addEventListener('click', () => doc.save());
 
   data.items.forEach((item) => $('items').append(makeItem(item)));
   showCount();

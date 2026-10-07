@@ -2,14 +2,15 @@
 
 // Builds a document from its sources:
 //   node tools/assemble.js <source folder> <output file>
-// The source folder holds meta.json ({ lang, title, docType, docTypeVersion }),
-// style.css, script.js and data.json. The current kit is inserted verbatim.
+// The source folder holds meta.json ({ lang, title, docType, docTypeVersion,
+// optional kitVersion }), style.css, script.js and data.json. The kit is inserted
+// verbatim: the current kit, or the published kit named by meta.kitVersion.
 const fs = require('node:fs');
 const path = require('node:path');
 const { buildDocument } = require('../src/frame');
 const { escapeJson } = require('../src/splice');
 const { checkDocument, formatReport } = require('../src/conformance');
-const { currentKit } = require('../kit');
+const { currentKit, findKit } = require('../kit');
 
 const [srcDir, outFile] = process.argv.slice(2);
 if (!srcDir || !outFile) {
@@ -19,7 +20,11 @@ if (!srcDir || !outFile) {
 
 const read = (name) => fs.readFileSync(path.join(srcDir, name), 'utf8');
 const meta = JSON.parse(read('meta.json'));
-const kit = currentKit();
+const kit = meta.kitVersion ? findKit(meta.kitVersion) : currentKit();
+if (!kit) {
+  console.error(`Kit ${meta.kitVersion} is not a published kit.`);
+  process.exit(1);
+}
 const html = buildDocument({
   lang: meta.lang,
   api: String(kit.api),

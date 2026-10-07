@@ -8,6 +8,7 @@ const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 const { JSDOM } = require('jsdom');
 const { checkDocument } = require('../src/conformance');
+const { currentKit } = require('../kit');
 
 const FIXTURES = path.join(__dirname, '..', 'fixtures');
 const documents = fs.readdirSync(FIXTURES).filter((n) => n.endsWith('.ev.html'));
@@ -25,6 +26,13 @@ for (const name of documents) {
   });
 }
 
+test('outdated-kit.ev.html is pinned to kit 1.0.0, every other fixture uses the current kit', () => {
+  for (const name of documents) {
+    const { parts } = checkDocument(fs.readFileSync(path.join(FIXTURES, name), 'utf8'));
+    assert.equal(parts.kitVersion, name === 'outdated-kit.ev.html' ? '1.0.0' : currentKit().version, name);
+  }
+});
+
 function loadFixture(name, host) {
   const html = fs.readFileSync(path.join(FIXTURES, name), 'utf8');
   const dom = new JSDOM(html, {
@@ -35,10 +43,13 @@ function loadFixture(name, host) {
   return dom.window.document;
 }
 
-test('hours sheet in the host: no Save button, rows reach the host', () => {
+const display = (document, el) => document.defaultView.getComputedStyle(el).display;
+
+test('hours sheet in the host: Save button and status hidden, rows reach the host', () => {
   const host = { version: 1, handler: null, dirty: 0, onSaveRequest(fn) { this.handler = fn; }, markDirty() { this.dirty++; } };
   const document = loadFixture('hours-sheet.ev.html', host);
-  assert.equal(document.getElementById('save'), null);
+  assert.equal(display(document, document.querySelector('[data-ev-fallback="save"]')), 'none');
+  assert.equal(display(document, document.querySelector('[data-ev-fallback="status"]')), 'none');
   document.getElementById('add').click();
   assert.equal(host.dirty, 1);
   assert.equal(JSON.parse(host.handler()).rows.length, 1);
@@ -46,16 +57,16 @@ test('hours sheet in the host: no Save button, rows reach the host', () => {
 
 test('hours sheet in a browser: own Save button and status line', () => {
   const document = loadFixture('hours-sheet.ev.html', null);
-  assert.ok(document.getElementById('save'));
+  assert.ok(document.querySelector('[data-ev-fallback="save"]'));
   document.getElementById('add').click();
-  assert.equal(document.getElementById('status').textContent, 'Unsaved changes');
+  assert.equal(document.querySelector('[data-ev-fallback="status"]').textContent, 'Unsaved changes');
 });
 
-test('to-do list in the host: no Save button, items reach the host', () => {
+test('to-do list in the host: Save button and status hidden, items reach the host', () => {
   const host = { version: 1, handler: null, dirty: 0, onSaveRequest(fn) { this.handler = fn; }, markDirty() { this.dirty++; } };
   const document = loadFixture('todo-list.ev.html', host);
-  assert.equal(document.getElementById('save'), null);
-  assert.equal(document.getElementById('status'), null);
+  assert.equal(display(document, document.querySelector('[data-ev-fallback="save"]')), 'none');
+  assert.equal(display(document, document.querySelector('[data-ev-fallback="status"]')), 'none');
   document.getElementById('text').value = 'Buy milk';
   document.getElementById('add').click();
   assert.equal(host.dirty, 1);
@@ -64,8 +75,8 @@ test('to-do list in the host: no Save button, items reach the host', () => {
 
 test('to-do list in a browser: own Save button and status line', () => {
   const document = loadFixture('todo-list.ev.html', null);
-  assert.ok(document.getElementById('save'));
+  assert.ok(document.querySelector('[data-ev-fallback="save"]'));
   document.getElementById('text').value = 'Buy milk';
   document.getElementById('add').click();
-  assert.equal(document.getElementById('status').textContent, 'Unsaved changes');
+  assert.equal(document.querySelector('[data-ev-fallback="status"]').textContent, 'Unsaved changes');
 });

@@ -3,7 +3,7 @@
 (function () {
   'use strict';
 
-  const doc = EvKit.init({ onDirtyChange: (dirty) => showStatus(dirty) });
+  const doc = EvKit.init();
   const data = doc.data;
   data.rows = Array.isArray(data.rows) ? data.rows : [];
 
@@ -13,13 +13,14 @@
   };
 
   // ---------- Build the UI (only exists at runtime, never saved) ----------
-  // In the host, the host owns saving: no Save button and no status line.
+  // The Save button and status are marked data-ev-fallback: the kit hides them in the host
+  // and wires them in a browser.
   const app = document.getElementById('ev-app');
   app.innerHTML = `
     <main>
       <header>
         <h1>Hours sheet</h1>
-        ${doc.hosted ? '' : '<span id="status">Saved</span>'}
+        <span id="status" data-ev-fallback="status">Saved</span>
       </header>
 
       <div class="bar">
@@ -33,7 +34,7 @@
         <button id="clearFilter" title="Show all rows">Clear filter</button>
         <span class="spacer"></span>
         <button id="sort">Sort by date</button>
-        ${doc.hosted ? '' : '<button id="save" class="primary">Save</button>'}
+        <button id="save" class="primary" data-ev-fallback="save">Save</button>
       </div>
 
       <div class="sheet">
@@ -79,13 +80,6 @@
 
   // ---------- Helpers ----------
   const fmt = (n) => (Math.round(n * 100) / 100).toLocaleString('en-US', { maximumFractionDigits: 2 });
-
-  function showStatus(dirty) {
-    const s = $('status');
-    if (!s) return;
-    s.textContent = dirty ? 'Unsaved changes' : 'Saved';
-    s.classList.toggle('dirty', dirty);
-  }
 
   function unique(field) {
     return [...new Set(data.rows.map(r => (r[field] || '').trim()).filter(Boolean))]
@@ -236,8 +230,6 @@
     $('fPerson').value = ''; $('fMonth').value = '';
     applyFilterAndTotals();
   });
-
-  if (!doc.hosted) $('save').addEventListener('click', () => doc.save());
 
   renderAll();
 })();

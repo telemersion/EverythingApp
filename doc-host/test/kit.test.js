@@ -5,12 +5,12 @@ const assert = require('node:assert/strict');
 const { JSDOM } = require('jsdom');
 const { parseDocument, buildDocument } = require('../src/frame');
 const { splice } = require('../src/splice');
-const { KITS, findKit } = require('../kit');
+const { KITS, findKit, currentKit } = require('../kit');
 const { SAMPLE_DATA, makeDocument, makeParts } = require('./helpers');
 
 // Loads a document in jsdom. Records which window listeners the document's
 // scripts register (jsdom registers some of its own; those are ignored).
-function load(html, { host } = {}) {
+function load(html, { host, picker } = {}) {
   const dom = new JSDOM(html, {
     runScripts: 'dangerously',
     url: 'https://example.test/sample.ev.html',
@@ -22,6 +22,13 @@ function load(html, { host } = {}) {
         return add(type, ...rest);
       };
       if (host) window.evHost = host;
+      if (picker) {
+        window.showSaveFilePicker = async () => ({
+          queryPermission: async () => 'granted',
+          requestPermission: async () => 'granted',
+          createWritable: async () => ({ write: (t) => picker.push(t), close: async () => {} }),
+        });
+      }
     },
   });
   return dom.window;
@@ -36,6 +43,46 @@ function fakeHost() {
     markDirty() { this.dirtyCalls++; },
   };
 }
+
+test('kit 1.1.0 is published for API 1 and is the current kit', () => {
+  assert.equal(currentKit(1).version, '1.1.0');
+  assert.ok(findKit('1.0.0'), 'kit 1.0.0 stays published');
+});
+
+test('with a host, elements marked data-ev-fallback are hidden', () => {
+  const script = '\nwindow.testDoc = EvKit.init();\n' +
+    'document.getElementById("ev-app").innerHTML = \'<button data-ev-fallback="save">Save</button><span data-ev-fallback="status"></span>\';\n';
+  const window = load(makeDocument({ script }), { host: fakeHost() });
+  const marked = window.document.querySelectorAll('[data-ev-fallback]');
+  assert.equal(marked.length, 2);
+  for (const el of marked) {
+    assert.equal(window.getComputedStyle(el).display, 'none');
+  }
+});
+
+test('without a host, the marked Save button saves through the fallback', async () => {
+  const written = [];
+  const script = '\nwindow.testDoc = EvKit.init();\n' +
+    'document.getElementById("ev-app").innerHTML = \'<button data-ev-fallback="save">Save</button>\';\n';
+  const window = load(makeDocument({ script }), { picker: written }); // load() installs a fake showSaveFilePicker
+  window.testDoc.changed();
+  window.document.querySelector('[data-ev-fallback="save"]').click();
+  await new Promise((r) => setTimeout(r, 0));
+  assert.deepEqual(written, [window.testDoc.toHtml()]);
+});
+
+test('without a host, the marked status shows the save state', async () => {
+  const script = '\nwindow.testDoc = EvKit.init();\n' +
+    'document.getElementById("ev-app").innerHTML = \'<span data-ev-fallback="status"></span>\';\n';
+  const window = load(makeDocument({ script }));
+  await new Promise((r) => setTimeout(r, 0));               // let DOMContentLoaded run
+  const status = window.document.querySelector('[data-ev-fallback="status"]');
+  assert.equal(status.textContent, 'Saved');                // set on DOMContentLoaded
+  assert.equal(status.getAttribute('data-ev-state'), 'saved');
+  window.testDoc.changed();
+  assert.equal(status.textContent, 'Unsaved changes');
+  assert.equal(status.getAttribute('data-ev-state'), 'unsaved');
+});
 
 test('published kits are LF-only and never contain </script or <!--', () => {
   for (const kit of KITS) {

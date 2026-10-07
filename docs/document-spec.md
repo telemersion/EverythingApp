@@ -1,6 +1,6 @@
 # EverythingApp document specification v1
 
-Status: normative · Host API v1 · Kit 1.0.0
+Status: normative · Host API v1 · Kit 1.1.0
 
 This specification defines what an EverythingApp document is and how it talks to the host. It is the contract for everyone who writes documents: people, Claude, and the future skill. A document works with EverythingApp exactly when it follows this specification. Terms are defined in the [glossary](reference/glossary.md).
 
@@ -61,11 +61,12 @@ The file ends with a single line break after `</html>`.
 1. **Namespace.** Every name defined by this specification starts with `ev`: `ev-` for meta names and element ids, `ev` for JavaScript globals (`window.evHost`, `EvKit`). The script section must not define names with this prefix.
 2. **Self-contained.** No external scripts, stylesheets, fonts or images. Inline everything; embed assets as `data:` URIs. Inside the host, every network request is blocked: no name lookups, no WebRTC, and every connection is refused.
 3. **Runtime UI.** The script section renders all UI into `#ev-app` at load time. `#ev-app` is empty in the saved file.
-4. **The host owns saving.** When `window.evHost` exists, the document shows no Save button and registers neither a Ctrl/Cmd+S handler nor `beforeunload`. The kit follows this on its side: it registers its own Ctrl/Cmd+S and `beforeunload` handlers only when `evHost` is absent. The document's own UI must follow it too: show a Save button and status line only when `doc.hosted` is `false` (section 5). *Why:* inside the host a Save button would do nothing (`save()` returns `false`), and the host ignores `beforeunload` (it cannot block closing). So this rule is about a consistent UI, not about safety.
+4. **The host owns saving.** When `window.evHost` exists, the document registers neither a Ctrl/Cmd+S handler nor `beforeunload`, and shows no working Save button. Mark the Save button `data-ev-fallback="save"` and the save status `data-ev-fallback="status"`: the kit hides both inside the host, and in a browser saves on the button and keeps the status text (`Saved` / `Unsaved changes`) and `data-ev-state` (`saved` / `unsaved`) current. Render them once and keep them in the page; style them with `[data-ev-state]`. Documents written for kit 1.0.0 decide from `doc.hosted` instead; that still works. *Why:* inside the host a Save button would do nothing (`save()` returns `false`), and the host ignores `beforeunload` (it cannot block closing).
 5. **UTF-8, LF only, no BOM.** The file must be valid UTF-8; the host refuses files in any other encoding (such as Latin-1 or Windows-1252). *Why:* the HTML parser turns CRLF into LF inside `<style>` and `<script>`. The kit's fallback rebuilds the file from that parsed text, so a CRLF file would change bytes outside the data block on its first browser save.
 6. **No storage between sessions.** Inside the host, `localStorage`, IndexedDB and cookies start empty on every open. View state (filters, scroll position) lasts one session. Anything that should survive belongs in the data block.
 7. **No navigation, no new windows.** Links that navigate away, `window.open` and form submissions are blocked. Iframes and frames cannot load anything (the content security policy refuses it) and, inside the host, receive no pointer input.
 8. **Files come in only through the user.** Inside the host, a document can receive files only through routes the user controls: a file picker (`<input type="file">`), paste and, in one case, a drop (below). It never sees file paths. Dropping files onto a document opens them in the host; the document does not receive the dropped files. Known limit of M1: a document that calls `document.open()` once its own parsing is done removes the host's drop guard and then receives files the user drops onto it (their contents, not their paths). Do not drop files onto a document you do not trust. Whatever a document imports lives in the data block (images as `data:` URIs). The data block is limited to 50 MB, and every save copies the whole file into the version store, so keep imports small.
+9. **No native dialogs.** Inside the host `alert()` does nothing, `confirm()` returns `false`, and `prompt()` throws (`prompt() is not supported.`). Ask for confirmation inside your own UI. *Why:* Electron shows these dialogs as native message boxes that look like the host's own, name no document and can be raised from a hidden tab; it offers no way to show them anywhere else, so the host turns them off (ADR 0001).
 
 ## 4. The data block
 
@@ -79,7 +80,7 @@ The file ends with a single line break after `</html>`.
 
 - An empty document starts with an empty object or empty collections (e.g. `{"rows":[]}`) and must render usefully.
 
-## 5. The kit interface (kit 1.0.0)
+## 5. The kit interface (kit 1.1.0)
 
 The kit runs before the script section and defines `window.EvKit`.
 
@@ -102,7 +103,8 @@ doc.changed();                // call after every change to data
 | Member | Meaning |
 | --- | --- |
 | `data` | The parsed data block. |
-| `hosted` | `true` inside EverythingApp, `false` in a plain browser. Show your own Save button and status line only when `false`. |
+| `hosted` | `true` inside EverythingApp, `false` in a plain browser. In a browser the kit wires the elements marked `data-ev-fallback="save"` (saves on click) and `data-ev-fallback="status"` (text `Saved` / `Unsaved changes`, attribute `data-ev-state`); inside the host it hides them. |
+| `EvKit.version` | `'1.1.0'` (a property of `EvKit`, not of the object `init` returns). |
 | `changed()` | Reports a change to the data. Inside the host it marks the document dirty; in a browser it updates the fallback's dirty state. |
 | `save()` | Browser only: saves through the fallback and returns a promise of `true` (saved) or `false` (cancelled or failed). Inside the host it does nothing and returns `false`. |
 | `toHtml()` | The complete document text with the current data, exactly as a save would write it. |
@@ -163,6 +165,7 @@ The reliable way is to write the sections separately and assemble them, which in
 ```
 doc-host/fixtures/src/<name>/
   meta.json   {"lang":"en","title":"…","docType":"…","docTypeVersion":"1.0"}
+              (optional "kitVersion" pins an older published kit; for tests only)
   style.css
   script.js
   data.json
