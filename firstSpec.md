@@ -61,11 +61,19 @@ v0.1 is delivered in three milestones. Each one is usable on its own; the code s
 - Document specification v1 as a standalone file (`docs/document-spec.md`), written so that a skill can follow it later.
 - Hours sheet adapted to the specification as the first fixture.
 
-**M2 · Workspace**: several documents in one window.
+**M2 · Workspace**: several documents in one window, with host UI that no document can imitate. Design decided on 2026-10-07; plan in [docs/plans/m2-workspace.md](docs/plans/m2-workspace.md).
 
-- Multiple documents per window: a collapsible document list on the side, switchable between a compact list (name, dirty marker, badges for conflict or kit update) and thumbnails of the rendered documents (like a PDF viewer's page sidebar). Each document is its own `WebContentsView` inside a `BaseWindow`; the host tracks which path belongs to which view.
-- Kit update: offer "Update kit" for outdated kits, replacing only the kit after the user confirms (previous file kept in the version store).
-- Close summary for several dirty documents (Save all / Review each / Cancel).
+- **One workspace.** The host has a single window. Its document area splits into panes as in Obsidian: nested in both directions, made by dragging a tab onto a pane's edge or with Split right / Split down (which move the active document), resized by dragging the dividers. Each pane has a tab strip; tabs move between panes by dragging. A document is open at most once: one tab in one pane. An emptied pane disappears, except the last one, which shows an empty state (Open…, drop a document here). Each document is its own `WebContentsView`; the host tracks which path belongs to which view.
+- **Document list.** A collapsible list on the side with every open document, grouped by pane, as a compact list or as thumbnails (like a PDF viewer's page sidebar). Tabs and list show the file name (full path on hover, parent folder added when two names are equal), the unsaved marker and badges.
+- **Host UI outside every document.** The list, tab strips, splitters and banners are drawn by one host-UI view beneath the document views (plain HTML and JavaScript, its own session and preload). The workspace model (layout, tabs, active document) lives in the main process. Everything the host tells or asks appears only in host areas, never in or over a document; documents cannot show native dialogs. See [ADR 0001](docs/adr/0001-host-ui-outside-documents.md).
+- **Banners and sheets.** What happens to a document while the user is not acting on it (changed on disk while unsaved, data changed on disk, moved or deleted, no longer conforming, errors while checking the disk) becomes a banner in its pane and a badge on its tab and list entry. What the user just did (save conflict, failed save, reload, close) is answered in a sheet on the window. A clean document that reloads after an external change shows a short "Updated from disk" banner.
+- **Hidden documents keep running** with Chromium's background throttling. Thumbnails are captured when a document is hidden, after every save and reload, 2 seconds after the last change while it is visible, and once after it first loads; they are held in memory only.
+- **Workspace restore.** On quit the host writes `workspace.json` to the app data folder (open paths, layout, tabs, active document, list mode, window size). The next start reopens every file through the conformance check and names missing or refused files in one notice. Unsaved changes are never carried over.
+- **Closing.** Cmd/Ctrl+W closes the active document. Closing the window quits the host on every platform. With several unsaved documents, closing shows the close summary: Save all / Review each / Cancel; a failed save stops closing on that document.
+- **Kit 1.1.0, fallback save UI.** The document marks its Save button and status line (`data-ev-fallback`); the kit hides them in the host and wires them up in the browser. Replaces the rule that the document itself decides from `doc.hosted` (kept for compatibility).
+- **Kit update.** A document with an outdated kit gets a badge, File → Update kit… and, once per run, a banner. After the user confirms, the host replaces only the kit (and saves unsaved data in the same write); the previous file stays in the version store, and Undo brings the old kit back until the document is closed.
+
+Not in M2: several windows, the same document in two panes, autosave, unsaved changes across a restart, Open Recent, tab previews, search or sorting in the list, pinned tabs, updating every kit at once, putting hidden documents to sleep, OS notifications.
 
 **M3 · Distribution**: installed, associated, self-updating.
 
@@ -84,7 +92,7 @@ Non-goals for v0.1, besides the skill that generates documents (defined once the
 - Linux packaging.
 - Re-linking the history of a moved document (match an orphaned store entry by file name, `ev-doc-type` and data block hash). `meta.json` already records what is needed.
 - "Save as…" and "Follow moved documents": when a document's file is moved or deleted, the host now only says so; later it can save the open data to a new file or follow the file to its new place.
-- Kit 1.1, fallback save UI: the document marks its Save button and status line (e.g. `data-ev-fallback`); the kit detects the host and hides them there, and wires them up in the browser, where the fallback needs them. Replaces the rule that the document itself decides from `doc.hosted`.
+- A host-drawn confirmation: `evHost.confirm(message)` in a later API version (feature-detected), shown in the document's banner row and labelled with its file name; the kit could route `confirm()` through it. Until then documents ask for confirmation inside their own UI (M2 turns off native dialogs).
 - "Revert to version" in the host UI (v0.1: restore by copying from the version store manually).
 - Stashing unsaved local data across a reload, showing a diff against a changed data block on disk and suggesting a merge (later; v0.1 only offers keep mine / take disk / cancel). The merge step also offers "Save mine as a copy".
 
@@ -193,22 +201,22 @@ doc.changed();                  // wherever data changes → evHost.markDirty() 
 
 ## Host behaviour
 
-The main process owns all file access; it maps each window to exactly one file path and never takes a path from the document.
+The main process owns all file access; it maps each document view to exactly one file path and never takes a path from the document.
 
 1. **Open.** Sources: File → Open dialog, command-line argument, drag-and-drop onto the app or window, and file association (double-click). The host first reads the file's head: without the `ev-host-api` meta tag the file is not a document and is handed to the default browser (any extension). For documents, the host runs the conformance check; on any violation it refuses to open the document and shows the report. Otherwise it creates a `WebContentsView` and stores `webContents.id → absolute path`.
-2. **Load.** The window loads the document from the custom protocol `ev-doc://<random-id>/` (see Security model), never via `file://`. The document gets its own `WebContentsView` and an entry in the document list. The window title shows the active document's file name, prefixed with `•` while dirty. Thumbnails are captured from the live view (`capturePage`) when the user switches away from a document and after each save, and are held in memory only.
+2. **Load.** The document's view loads it from the custom protocol `ev-doc://<random-id>/` (see Security model), never via `file://`. The document gets its own `WebContentsView`, a tab right of the active tab in the focused pane, and an entry in the document list; a file dropped onto a document opens in that document's pane. The window title shows the active document's file name, prefixed with `•` while it is dirty. Thumbnails are captured from the live view (`capturePage`) when a document is hidden, after each save and reload, 2 seconds after the last change while it is visible, and once after its first load; they are held in memory only.
 3. **Save.** File → Save, Ctrl/Cmd+S or the close prompt sends `doc:request-save` to the active document's view. The document answers with `doc:save-data`; the host looks up the path for the sending view, reads the current file from disk, replaces only the data block content and writes it (step 5).
-4. **Dirty state.** `doc:dirty` marks the window dirty. After a successful write, the host clears the marker only if the snapshot's change counter is still the latest one.
+4. **Dirty state.** `doc:dirty` marks the document dirty (its tab, its list entry and, while it is active, the window title). After a successful write, the host clears the marker only if the snapshot's change counter is still the latest one.
 5. **Write safely.** Copy the current file into the version store (`<app data>/EverythingApp/versions/<hash of absolute path>/`), write the new content to `<name>.tmp` in the same folder, then rename it over the original. On any error the original stays untouched and the error is returned to the document.
-6. **External change.** The host watches the open file and hashes each section on load and after every save. When the file changes on disk:
-   - Behaviour changed, window clean → reload automatically.
-   - Behaviour changed, window dirty → banner: "This document was updated. Save my data and reload / Reload and discard my changes / Later".
-   - Data block changed → never overwrite silently; the next save shows a conflict prompt: Keep mine / Take the version on disk / Cancel. The write itself checks again that the data on disk is still what the host last saw; if it is not, the same prompt appears.
-   - File moved or deleted → the host says so ("moved or deleted"): changes exist only in the window, put the file back at its path and save again. The last saved version stays in the version store.
-   - Reload (View → Reload) with unsaved changes asks: Save and reload / Discard and reload / Cancel.
-7. **Close.** Closing a document that is dirty shows Save / Don't save / Cancel; Save triggers step 3. The window closes only when nothing is left unsaved: a failed save, or an edit made while saving, keeps it open. Save, close and reload run one at a time; close and reload wait for a running save. A save requested while another runs waits and then saves again with fresh data; if the running save fails or is cancelled, the waiting one is dropped. Closing the window with several dirty documents shows a summary: Save all / Review each / Cancel. Ctrl/Cmd+S and File → Save always act on the active document.
+6. **External change.** The host watches each open file and hashes the data block and everything outside it on load and after every save. When the file changes on disk (M2: as a banner in the document's pane and a badge on its tab and list entry, never a dialog):
+   - Anything outside the data block changed (behaviour, kit or frame fields), document clean → reload automatically and show a short "Updated from disk" banner.
+   - Anything outside the data block changed, document dirty → banner: "This document was updated on disk. Save my data and reload / Reload and discard my changes / Later".
+   - Data block changed, document dirty → banner at once: Keep mine / Take the version on disk. Never overwrite silently: if the conflict is still open at the next save, the save asks the same in a sheet (plus Cancel). The write itself checks again that the data on disk is still what the host last saw; if it is not, the same prompt appears.
+   - File moved or deleted → banner ("moved or deleted"): changes exist only in the window, put the file back at its path and save again. The last saved version stays in the version store.
+   - Reload (View → Reload) with unsaved changes asks in a sheet: Save and reload / Discard and reload / Cancel.
+7. **Close.** Closing a document (Cmd/Ctrl+W) that is dirty shows Save / Don't save / Cancel; Save triggers step 3. A document closes only when nothing is left unsaved: a failed save, or an edit made while saving, keeps it open. Save, close and reload run one at a time per document; close and reload wait for a running save. A save requested while another runs waits and then saves again with fresh data; if the running save fails or is cancelled, the waiting one is dropped. Closing the window or quitting with one dirty document shows that document's prompt; with several, the close summary: Save all / Review each / Cancel. Save all stops at the first document that fails, is cancelled or is dirty again, and makes it active; Review each asks per document, and Cancel anywhere keeps everything open. Closing the window quits the host on every platform, after writing `workspace.json`. Ctrl/Cmd+S and File → Save always act on the active document.
 8. **Unexpected errors.** Any failure not handled elsewhere (opening, checking the disk, closing, reloading) shows an error dialog with a "Copy report" button: file, action, message, stack trace, host and Electron version.
-9. **Menu.** File: Open, Save, Close, Reveal in folder. View: Document list (show/hide), List / Thumbnails, Reload, Developer tools (dev builds only). Help: Check for updates.
+9. **Menu.** File: Open, Save, Close, Close window, Update kit…, Reveal in folder. View: Document list (show/hide), List / Thumbnails, Split right, Split down, Reload, Developer tools (dev builds only). Window: next and previous tab, tab by position, neighbouring pane. Help: Check for updates.
 
 Splicing the data block (main process, `doc-host/src/splice.js`):
 
@@ -256,7 +264,9 @@ Required settings and checks:
 - **Network.** M1 does no name resolution at all (`host-resolver-rules` maps every name to "not found"), so documents cannot leak data through DNS lookups such as dns-prefetch. WebRTC UDP is disabled, and every document session goes through a proxy that refuses every connection. M3 adds one exception for the update feed. The only network access in the whole host is auto-update, made by the main process (not by any document session) to one fixed update feed.
 - **No input to subframes.** The host injects a user style that gives iframes and frames no pointer input, so a file dropped onto one lands on the document itself, where the host opens it. A document does not receive dropped files; it can import files through a file picker or paste. Known limit of M1: the drop guard is a set of event listeners the preload adds to the page, and `document.open()` removes every listener on the page. A document that calls it once its own parsing is done (from a timer or an event handler) can then receive files the user drops onto it (their contents, not their paths); confirmed with a real drag in the M1 manual check (2026-10-07). Patching `document.open` from the preload is not a reliable guard (another frame's copy of the function would likely bypass it); closing this needs a guard outside the page (M4).
 - **Size limits.** Documents over 60 MB are refused on open; data blocks over 50 MB are not written. The 60 MB limit is checked only on open in M1.
-- **No permissions.** `setPermissionRequestHandler` denies camera, microphone, geolocation, notifications etc.
+- **No permissions.** `setPermissionRequestHandler` denies camera, microphone, geolocation, notifications, fullscreen etc.
+- **No native dialogs (M2).** `webPreferences.disableDialogs`: `alert()` does nothing and `confirm()` returns `false`. Electron shows them as native message boxes that look like the host's own and name no document, and it offers no way to show them anywhere else, so they are turned off. Documents ask for confirmation inside their own UI.
+- **Host UI outside the document (M2).** Host messages appear only in host areas (document list, tab strips, banner rows); a document's view never overlaps them. The host-UI view only accepts its own messages (`ui:*`) and documents only theirs (`doc:*`), told apart by the sending view.
 - **Validate writes.** The host rejects `doc:save-data` with non-string input, invalid JSON and payloads over a size limit (e.g. 50 MB).
 - **Data, not code (permanent).** The Host API is data-only in every version. The host writes the data block on save and the kit on a user-confirmed kit update; it never writes the style or script section on behalf of a document. Kit text comes only from the host's own list of published kits, never from the document, so a document cannot rewrite any code through the API.
 - **Origin isolation.** The random id gives each opened document its own origin, so documents cannot read each other's storage.
@@ -309,7 +319,7 @@ The idea has a solid lineage; TiddlyWiki with TiddlyDesktop is the closest worki
 - [x] **Concurrent edits.** Resolved: watch the file, react per section (see Host behaviour, step 6). Later: stash local data, show a diff, suggest a merge.
 - [x] **Update manifest.** Resolved: GitHub Releases with `electron-updater` (electron-builder); CI builds, signs, notarises and uploads, the host reads `latest.yml` / `latest-mac.yml`. The releases must be publicly readable (public repo or a separate public releases repo). Still open: who owns the signing certificates and the release account (personal or ZHdK).
 - [x] **Backups.** Resolved: central version store in the app data folder, keyed by path; no sibling files (safe in Git repos, shared and synced folders).
-- [x] **Persistent per-document settings.** Resolved: none in v0.1; view state is per session, durable state lives in the data block. A host-managed `evHost.viewState` may follow in a later API version (feature-detected).
+- [x] **Persistent per-document settings.** Resolved: none in v0.1; view state is per session, durable state lives in the data block. A host-managed `evHost.viewState` may follow in a later API version (feature-detected). The M2 `workspace.json` is host state (which files are open and where), not per-document settings.
 
 ## To document
 
@@ -371,4 +381,4 @@ M1 tasks, in order:
 10. Adapt `hours-sheet.html` to the specification (frame, sections, kit, `ev` names, no own Save button under the host) and use it as the first fixture.
 11. Walk through the acceptance criteria in the user story.
 
-M2 and M3 are planned once M1 passes its acceptance criteria.
+M1 passed its acceptance criteria on 2026-10-07. M2 is planned in [docs/plans/m2-workspace.md](docs/plans/m2-workspace.md); M3 is planned once M2 passes.
