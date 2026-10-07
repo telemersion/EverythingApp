@@ -3,6 +3,12 @@
 // Host API v1 (window.evHost). Runs sandboxed, in an isolated world.
 const { contextBridge, ipcRenderer, webUtils, webFrame } = require('electron');
 
+// Every page load announces a random id before it sends anything else and
+// tags its messages with it: the host ignores messages from earlier loads
+// (load-tags.js).
+const loadId = crypto.randomUUID();
+ipcRenderer.send('doc:hello', loadId);
+
 // Subframes receive no pointer input (see the drop handling below). Inserted
 // here so it is in place before any document script runs; security.js inserts
 // it again on dom-ready as a backstop. Copy of NO_IFRAME_INPUT in
@@ -29,7 +35,7 @@ ipcRenderer.on('doc:request-save', (_event, requestId) => {
       error = `The document failed to produce its data: ${err && err.message ? err.message : err}`;
     }
   }
-  ipcRenderer.send('doc:save-data', { requestId, json, changes, error });
+  ipcRenderer.send('doc:save-data', { loadId, requestId, json, changes, error });
 });
 
 contextBridge.exposeInMainWorld('evHost', {
@@ -37,7 +43,7 @@ contextBridge.exposeInMainWorld('evHost', {
   onSaveRequest: (handler) => {
     if (typeof handler === 'function') saveHandler = handler;
   },
-  markDirty: () => ipcRenderer.send('doc:dirty', ++changes),
+  markDirty: () => ipcRenderer.send('doc:dirty', { loadId, counter: ++changes }),
 });
 
 // Files dropped onto a document open in the host. The preload's capture

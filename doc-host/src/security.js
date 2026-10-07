@@ -58,6 +58,8 @@ function hardenContents(wc) {
   wc.setWindowOpenHandler(() => ({ action: 'deny' }));
 }
 
+// disableDialogs: alert() does nothing and confirm() returns false at once.
+// A document cannot block itself or the host with a native dialog.
 const WEB_PREFERENCES = Object.freeze({
   contextIsolation: true,
   sandbox: true,
@@ -66,6 +68,7 @@ const WEB_PREFERENCES = Object.freeze({
   webviewTag: false,
   navigateOnDragDrop: false,
   spellcheck: false,
+  disableDialogs: true,
 });
 
 module.exports = { hardenSession, hardenContents, WEB_PREFERENCES, NO_IFRAME_INPUT };

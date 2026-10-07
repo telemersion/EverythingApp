@@ -5,18 +5,19 @@ const path = require('node:path');
 const { buildDocument } = require('./frame');
 const { sha256 } = require('./hash');
 
-// Behaviour is everything except the data block: the frame fields, style,
-// kit and script. Hashing the document with an empty data block covers it.
+// Outside data is everything except the data block: the frame fields,
+// style, kit and script. Hashing the document with an empty data block
+// covers it.
 function sectionHashes(parts) {
   return {
-    behaviour: sha256(buildDocument({ ...parts, data: '' })),
+    outsideData: sha256(buildDocument({ ...parts, data: '' })),
     data: sha256(parts.data),
   };
 }
 
 function classifyChange(before, after) {
   return {
-    behaviour: before.behaviour !== after.behaviour,
+    outsideData: before.outsideData !== after.outsideData,
     data: before.data !== after.data,
   };
 }

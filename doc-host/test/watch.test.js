@@ -8,21 +8,21 @@ const path = require('node:path');
 const { sectionHashes, classifyChange, watchFile } = require('../src/watch');
 const { makeParts } = require('./helpers');
 
-test('a data change is not a behaviour change', () => {
+test('a data change is not a change outside the data', () => {
   const before = sectionHashes(makeParts());
   const after = sectionHashes(makeParts({ data: '{"rows":[]}' }));
-  assert.deepEqual(classifyChange(before, after), { behaviour: false, data: true });
+  assert.deepEqual(classifyChange(before, after), { outsideData: false, data: true });
 });
 
-test('script, style and title changes are behaviour changes', () => {
+test('script, style and title changes are changes outside the data', () => {
   const before = sectionHashes(makeParts());
   for (const change of [{ script: '\n// v2\n' }, { style: '\n/* v2 */\n' }, { title: 'Renamed' }]) {
-    assert.deepEqual(classifyChange(before, sectionHashes(makeParts(change))), { behaviour: true, data: false });
+    assert.deepEqual(classifyChange(before, sectionHashes(makeParts(change))), { outsideData: true, data: false });
   }
 });
 
 test('identical parts are no change', () => {
-  assert.deepEqual(classifyChange(sectionHashes(makeParts()), sectionHashes(makeParts())), { behaviour: false, data: false });
+  assert.deepEqual(classifyChange(sectionHashes(makeParts()), sectionHashes(makeParts())), { outsideData: false, data: false });
 });
 
 test('watchFile reports a replaced file once, debounced, and ignores siblings', async (t) => {
