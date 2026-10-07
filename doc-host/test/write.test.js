@@ -7,6 +7,8 @@ const os = require('node:os');
 const path = require('node:path');
 const { pathKey, selectVersionsToDelete, writeDocument } = require('../src/write');
 const { splice } = require('../src/splice');
+const { parseDocument } = require('../src/frame');
+const { findKit, currentKit } = require('../kit');
 const { sectionHashes } = require('../src/watch');
 const { makeDocument, makeParts } = require('./helpers');
 
@@ -178,4 +180,76 @@ test('selectVersionsToDelete keeps the newest 20 plus one per day for 30 days', 
   assert.ok(kept.includes('2026-10-02T16-00-00-000Z.html'));
   assert.ok(!kept.includes('2026-10-02T08-00-00-000Z.html'));
   assert.ok(!doomed.includes('meta.json'));
+});
+
+async function setupOutdated() {
+  const dir = await mkTemp('ev-write-');
+  const filePath = path.join(dir, 'old.ev.html');
+  const storeDir = path.join(dir, 'store');
+  const old = findKit('1.0.0');
+  await fs.writeFile(filePath, makeDocument({ kitVersion: old.version, kit: old.text }), 'utf8');
+  return { dir, filePath, storeDir };
+}
+
+async function storedVersions(filePath, storeDir) {
+  const entry = path.join(storeDir, pathKey(filePath));
+  const names = (await fs.readdir(entry)).filter((n) => n.endsWith('.html'));
+  return Promise.all(names.map((n) => fs.readFile(path.join(entry, n), 'utf8')));
+}
+
+test('writeDocument with a kit and no data replaces only the kit and keeps the previous file', async () => {
+  const { filePath, storeDir } = await setupOutdated();
+  const original = await fs.readFile(filePath, 'utf8');
+  const result = await writeDocument(filePath, null, { storeDir, kit: currentKit() });
+  const onDisk = await fs.readFile(filePath, 'utf8');
+  assert.equal(result, onDisk);
+  assert.deepEqual(parseDocument(onDisk).parts, {
+    ...parseDocument(original).parts,
+    kitVersion: '1.1.0',
+    kit: currentKit().text,
+  });
+  assert.deepEqual(await storedVersions(filePath, storeDir), [original]);
+});
+
+test('writeDocument with a kit and data replaces both in one write', async () => {
+  const { filePath, storeDir } = await setupOutdated();
+  const original = await fs.readFile(filePath, 'utf8');
+  await writeDocument(filePath, '{"rows":[]}', { storeDir, kit: currentKit() });
+  const onDisk = await fs.readFile(filePath, 'utf8');
+  assert.deepEqual(parseDocument(onDisk).parts, {
+    ...parseDocument(original).parts,
+    data: '{"rows":[]}',
+    kitVersion: '1.1.0',
+    kit: currentKit().text,
+  });
+  assert.deepEqual(await storedVersions(filePath, storeDir), [original]);
+});
+
+test('writeDocument with neither data nor kit is refused and changes nothing', async () => {
+  const { filePath, storeDir } = await setup();
+  const original = await fs.readFile(filePath, 'utf8');
+  await assert.rejects(writeDocument(filePath, null, { storeDir }), { name: 'TypeError', message: 'Nothing to write.' });
+  assert.equal(await fs.readFile(filePath, 'utf8'), original);
+  await assert.rejects(fs.readdir(storeDir), { code: 'ENOENT' });
+});
+
+test('a kit equal to the current kit still writes and stores a version', async () => {
+  const { filePath, storeDir } = await setup();
+  const original = await fs.readFile(filePath, 'utf8');
+  await writeDocument(filePath, null, { storeDir, kit: currentKit() });
+  assert.equal(await fs.readFile(filePath, 'utf8'), original);
+  assert.deepEqual(await storedVersions(filePath, storeDir), [original]);
+});
+
+test('a kit write checks the expected data hash like a save', async () => {
+  const { filePath, storeDir } = await setupOutdated();
+  const original = await fs.readFile(filePath, 'utf8');
+  await assert.rejects(
+    writeDocument(filePath, null, { storeDir, kit: currentKit(), expectedDataHash: 'not-the-hash' }),
+    { code: 'EV_DATA_CONFLICT' },
+  );
+  assert.equal(await fs.readFile(filePath, 'utf8'), original);
+  const good = sectionHashes(parseDocument(original).parts).data;
+  await writeDocument(filePath, null, { storeDir, kit: currentKit(), expectedDataHash: good });
+  assert.equal(parseDocument(await fs.readFile(filePath, 'utf8')).parts.kitVersion, '1.1.0');
 });

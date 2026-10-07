@@ -4,7 +4,7 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const { checkDocument } = require('./conformance');
 const { sha256 } = require('./hash');
-const { splice } = require('./splice');
+const { splice, replaceKit } = require('./splice');
 const { sectionHashes } = require('./watch');
 
 const KEEP_LATEST = 20;
@@ -78,12 +78,14 @@ async function exists(p) {
 // 1. read the current file and check that it still conforms (and, with
 //    expectedDataHash, that its data is still the data we last saw) and
 //    that it is writable,
-// 2. splice the data into it,
+// 2. splice the data into it (unless json is null) and replace its kit
+//    (when a kit is given); at least one of the two is required,
 // 3. write <name>.tmp next to it with the same permissions and flush it,
 // 4. keep the current file in the version store,
 // 5. rename <name>.tmp over the original.
 // Any error leaves the original untouched. Returns the new file content.
-async function writeDocument(filePath, json, { storeDir, now = new Date(), expectedDataHash }) {
+async function writeDocument(filePath, json, { storeDir, now = new Date(), expectedDataHash, kit }) {
+  if (json === null && !kit) throw new TypeError('Nothing to write.');
   const check = checkDocument(await fs.readFile(filePath));
   if (!check.ok) {
     throw new Error('The file on disk no longer follows the document specification, so it was not changed: ' +
@@ -103,7 +105,8 @@ async function writeDocument(filePath, json, { storeDir, now = new Date(), expec
     throw new Error('The file is read-only.');
   }
   const current = check.text;
-  const next = splice(current, json);
+  let next = json === null ? current : splice(current, json);
+  if (kit) next = replaceKit(next, kit);
 
   const tmp = `${filePath}.tmp`;
   try {

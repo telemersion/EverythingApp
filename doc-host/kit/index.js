@@ -28,9 +28,22 @@ function findKit(version) {
   return KITS.find((k) => k.version === version) || null;
 }
 
-function currentKit(api = MAX_API_VERSION) {
+// The newest published kit of an API version, or null if there is none.
+function newestKit(api) {
   const kits = KITS.filter((k) => k.api === api);
-  return kits[kits.length - 1];
+  return kits[kits.length - 1] || null;
 }
 
-module.exports = { KITS, MAX_API_VERSION, findKit, currentKit, kitSectionText, sha256 };
+// The newest kit of the highest API version (alias kept from M1).
+function currentKit(api = MAX_API_VERSION) {
+  return newestKit(api);
+}
+
+// { from, to } when a newer kit of the document's API exists, else null.
+function outdatedKit(parts) {
+  const newest = newestKit(Number(parts.api));
+  if (!newest || newest.version === parts.kitVersion) return null;
+  return { from: parts.kitVersion, to: newest.version };
+}
+
+module.exports = { KITS, MAX_API_VERSION, findKit, currentKit, newestKit, outdatedKit, kitSectionText, sha256 };

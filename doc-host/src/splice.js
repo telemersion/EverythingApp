@@ -20,4 +20,12 @@ function splice(html, json) {
   return buildDocument({ ...frame.parts, data: escapeJson(json) });
 }
 
-module.exports = { escapeJson, splice };
+// Replaces the kit and its version and keeps every other byte, through the
+// frame like splice.
+function replaceKit(html, kit) {
+  const frame = parseDocument(html);
+  if (!frame.ok) throw new Error('The file does not match the document frame.');
+  return buildDocument({ ...frame.parts, kitVersion: kit.version, kit: kit.text });
+}
+
+module.exports = { escapeJson, splice, replaceKit };

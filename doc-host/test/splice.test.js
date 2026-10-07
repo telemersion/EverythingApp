@@ -2,7 +2,10 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { escapeJson, splice } = require('../src/splice');
+const { escapeJson, splice, replaceKit } = require('../src/splice');
+const { parseDocument } = require('../src/frame');
+const { checkDocument } = require('../src/conformance');
+const { findKit, currentKit } = require('../kit');
 const { makeDocument } = require('./helpers');
 
 test('escapeJson writes every < as \\u003c', () => {
@@ -44,4 +47,16 @@ test('splice finds the real data block although the kit source mentions its tag'
   const html = makeDocument();
   assert.ok(html.split('id="ev-data">').length > 2, 'the kit contains the tag text');
   assert.ok(splice(html, '{"ok":1}').includes('<div id="ev-app"></div>\n  <script type="application/json" id="ev-data">{"ok":1}</script>'));
+});
+
+test('replaceKit changes only the kit and its version', () => {
+  const old = findKit('1.0.0');
+  const html = makeDocument({ kitVersion: old.version, kit: old.text });
+  const next = replaceKit(html, currentKit());
+  assert.deepEqual(parseDocument(next).parts, { ...parseDocument(html).parts, kitVersion: '1.1.0', kit: currentKit().text });
+  assert.equal(checkDocument(next).ok, true);
+});
+
+test('replaceKit refuses a file that does not match the frame', () => {
+  assert.throws(() => replaceKit('<html></html>', currentKit()), /document frame/);
 });

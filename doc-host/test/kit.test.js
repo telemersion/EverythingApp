@@ -5,7 +5,7 @@ const assert = require('node:assert/strict');
 const { JSDOM } = require('jsdom');
 const { parseDocument, buildDocument } = require('../src/frame');
 const { splice } = require('../src/splice');
-const { KITS, findKit, currentKit } = require('../kit');
+const { KITS, findKit, currentKit, newestKit, outdatedKit } = require('../kit');
 const { SAMPLE_DATA, makeDocument, makeParts } = require('./helpers');
 
 // Loads a document in jsdom. Records which window listeners the document's
@@ -161,4 +161,14 @@ test('the kit builds the same frame as frame.js', () => {
   const parts = makeParts({ title: 'Ünïcode – title', lang: 'de-CH' });
   const window = load(buildDocument(parts));
   assert.equal(window.testDoc.toHtml(), buildDocument(parts));
+});
+
+test('newestKit returns the newest kit of an API, or null', () => {
+  assert.equal(newestKit(1).version, '1.1.0');
+  assert.equal(newestKit(999), null);
+});
+
+test('outdatedKit names the newest kit of the same API', () => {
+  assert.deepEqual(outdatedKit(makeParts({ kitVersion: '1.0.0', kit: findKit('1.0.0').text })), { from: '1.0.0', to: '1.1.0' });
+  assert.equal(outdatedKit(makeParts()), null);
 });
