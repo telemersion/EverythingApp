@@ -12,7 +12,7 @@ function emptyStatus() {
     checkError: null,
     kitUpdate: null,
     kitUpdated: null,
-    updatedFromDisk: false,
+    updatedFromDisk: 0, // 0 = off; else a key that changes on every start of the period
     dismissed: [],
   };
 }
@@ -79,11 +79,12 @@ const KINDS = {
   },
   'updated-from-disk': {
     holds: (s) => s.updatedFromDisk,
-    banner: () => ({
+    banner: (s) => ({
       message: 'Updated from disk.',
       actions: [],
       dismissLabel: null,
       fadeMs: 4000,
+      fadeKey: s.updatedFromDisk,
     }),
   },
 };

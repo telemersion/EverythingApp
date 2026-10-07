@@ -118,10 +118,11 @@ class Document {
   // one in that time starts the time again.
   showUpdatedFromDisk() {
     clearTimeout(this.fromDiskTimer);
-    this.setStatus({ updatedFromDisk: true });
+    this.fromDiskKey = (this.fromDiskKey || 0) + 1; // every start is a new key, so a new state is pushed
+    this.setStatus({ updatedFromDisk: this.fromDiskKey });
     this.fromDiskTimer = setTimeout(() => {
       this.fromDiskTimer = null;
-      this.setStatus({ updatedFromDisk: false });
+      this.setStatus({ updatedFromDisk: 0 });
     }, UPDATED_FROM_DISK_MS);
   }
 

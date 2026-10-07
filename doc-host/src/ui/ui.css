@@ -298,6 +298,10 @@ button:focus-visible {
   background: var(--banner-bg);
 }
 
+.banners.spent {
+  background: transparent;
+}
+
 .banner {
   box-sizing: border-box;
   display: flex;

@@ -219,3 +219,30 @@ test('a hidden list draws nothing', () => {
   assert.equal(document.getElementById('list').hidden, true);
   assert.equal(document.querySelector('.strip').style.left, '0px');
 });
+
+test('the fade of "Updated from disk" is keyed on the main process fadeKey', () => {
+  const page = loadPage();
+  let now = 1000;
+  page.window.Date.now = () => now;
+  const push = (key) => {
+    const model = addTab(createModel(), 'a');
+    page.render(stateOf(model, [{ id: 'a', path: '/docs/a.ev.html', docType: 'note', status: status({ updatedFromDisk: key }) }]));
+  };
+  const delay = () => page.document.querySelector('.banner[data-kind="updated-from-disk"]').style.animationDelay;
+  push(1);
+  assert.equal(delay(), '0ms');
+  now = 2500;
+  push(1); // the same period: the start stays
+  assert.equal(delay(), '-1500ms');
+  push(2); // a restart: a new key
+  assert.equal(delay(), '0ms');
+  now = 3000;
+  push(2);
+  assert.equal(delay(), '-500ms');
+  now = 6600; // the fade is over before the main process clears the banner: nothing visible remains
+  push(2);
+  assert.equal(page.document.querySelector('.banner'), null);
+  assert.ok(page.document.querySelector('.banners').classList.contains('spent'));
+  push(3); // and a later restart shows it again
+  assert.equal(delay(), '0ms');
+});

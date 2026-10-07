@@ -19,7 +19,7 @@
 
   let state = null;
   const dividers = new Map();   // `${splitId}:${index}` → element, kept while a drag holds it
-  const fadeStarts = new Map(); // `${docId}:${kind}` → when that fading banner first showed
+  const fadeStarts = new Map(); // `${docId}:${kind}` → { key, start }: the period (fadeKey) and when it first showed
 
   const send = (intent) => window.evUi.send(intent);
   const byId = (id) => document.getElementById(id);
@@ -183,15 +183,23 @@
 
   // ---------- Banner rows ----------
 
-  // A banner with fadeMs fades out over that time, counted from when it
-  // first showed (a new state does not start it again).
-  function fade(node, key, ms, shown) {
+  // A banner with fadeMs fades out over that time. The main process times
+  // the period and gives it a fadeKey: the same key keeps its start across
+  // states and tab switches, a new key starts the fade again. Returns false
+  // when the fade is already over (nothing is drawn then).
+  function fade(node, key, banner, shown) {
     const now = Date.now();
-    if (!fadeStarts.has(key)) fadeStarts.set(key, now);
+    let entry = fadeStarts.get(key);
+    if (!entry || entry.key !== banner.fadeKey) {
+      entry = { key: banner.fadeKey, start: now };
+      fadeStarts.set(key, entry);
+    }
     shown.add(key);
+    if (now - entry.start >= banner.fadeMs) return false;
     node.classList.add('fading');
-    node.style.animationDuration = `${ms}ms`;
-    node.style.animationDelay = `${fadeStarts.get(key) - now}ms`;
+    node.style.animationDuration = `${banner.fadeMs}ms`;
+    node.style.animationDelay = `${entry.start - now}ms`;
+    return true;
   }
 
   function bannerElement(docId, banner, shownFades) {
@@ -209,7 +217,7 @@
       node.append(actionButton);
     }
     if (typeof banner.dismissLabel === 'string') node.append(button('dismiss', banner.dismissLabel, act('dismiss')));
-    if (banner.fadeMs) fade(node, `${docId}:${banner.kind}`, banner.fadeMs, shownFades);
+    if (banner.fadeMs && !fade(node, `${docId}:${banner.kind}`, banner, shownFades)) return null;
     return node;
   }
 
@@ -218,7 +226,11 @@
     const row = element('div', 'banners');
     row.dataset.paneId = pane.paneId;
     place(row, rect);
-    for (const banner of banners.slice(0, SHOWN_BANNERS)) row.append(bannerElement(pane.selected, banner, shownFades));
+    for (const banner of banners.slice(0, SHOWN_BANNERS)) {
+      const node = bannerElement(pane.selected, banner, shownFades);
+      if (node) row.append(node);
+    }
+    if (row.childElementCount === 0) row.classList.add('spent'); // every banner has faded: no empty opaque band
     if (banners.length > SHOWN_BANNERS) row.append(element('div', 'more', `+${banners.length - SHOWN_BANNERS} more`));
     return row;
   }

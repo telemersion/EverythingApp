@@ -144,7 +144,7 @@ async function run(dir) {
   const updates = []; // the status at every ui.update()
   const realUpdate = doc.ui.update;
   doc.ui.update = () => {
-    updates.push({ fromDisk: doc.status.updatedFromDisk, at: Date.now() });
+    updates.push({ fromDisk: !!doc.status.updatedFromDisk, at: Date.now() });
     realUpdate();
   };
   const edited = buildDocument({ ...after, style: after.style + 'h1 { color: rgb(200, 0, 0); }\n' });

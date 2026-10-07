@@ -15,7 +15,7 @@ test('emptyStatus has the documented shape', () => {
   assert.deepEqual(emptyStatus(), {
     dirty: false, missing: false, nonConforming: null, dataConflict: false,
     updatedWhileDirty: false, checkError: null, kitUpdate: null, kitUpdated: null,
-    updatedFromDisk: false, dismissed: [],
+    updatedFromDisk: 0, dismissed: [],
   });
   assert.notEqual(emptyStatus().dismissed, emptyStatus().dismissed);
 });
@@ -80,17 +80,18 @@ test('banner copy', () => {
     actions: [{ id: 'undo-kit', label: 'Undo' }],
     dismissLabel: 'OK',
   });
-  assert.deepEqual(banner({ updatedFromDisk: true }), {
+  assert.deepEqual(banner({ updatedFromDisk: 7 }), {
     kind: 'updated-from-disk',
     message: 'Updated from disk.',
     actions: [],
     dismissLabel: null,
     fadeMs: 4000,
+    fadeKey: 7,
   });
 });
 
 test('updated-from-disk and kit-updated are banners, not badges', () => {
-  const s = { ...emptyStatus(), updatedFromDisk: true, kitUpdated: { from: '1.0.0', to: '1.1.0' } };
+  const s = { ...emptyStatus(), updatedFromDisk: 3, kitUpdated: { from: '1.0.0', to: '1.1.0' } };
   const d = describeStatus(s, NAMES);
   assert.deepEqual(d.badges, []);
   assert.equal(d.badge, null);
@@ -101,7 +102,7 @@ test('updated-from-disk and kit-updated are banners, not badges', () => {
 
 test('banner order puts the badge kinds first, then kit-updated, then updated-from-disk', () => {
   const s = {
-    ...emptyStatus(), updatedFromDisk: true, kitUpdated: { from: '1', to: '2' }, checkError: 'e',
+    ...emptyStatus(), updatedFromDisk: 3, kitUpdated: { from: '1', to: '2' }, checkError: 'e',
     updatedWhileDirty: true, nonConforming: 'r',
   };
   assert.deepEqual(describeStatus(s, NAMES).banners.map((b) => b.kind),
@@ -113,7 +114,7 @@ test('dirty alone is neither badge nor banner', () => {
 });
 
 test('dismissal hides banners of kit-updated and updated-from-disk too', () => {
-  const s = { ...emptyStatus(), kitUpdated: { from: '1', to: '2' }, updatedFromDisk: true, dismissed: ['kit-updated', 'updated-from-disk'] };
+  const s = { ...emptyStatus(), kitUpdated: { from: '1', to: '2' }, updatedFromDisk: 3, dismissed: ['kit-updated', 'updated-from-disk'] };
   assert.deepEqual(describeStatus(s, NAMES).banners, []);
 });
 
@@ -126,4 +127,23 @@ test('describeStatus does not mutate the status', () => {
   const copy = structuredClone(s);
   describeStatus(s, NAMES);
   assert.deepEqual(s, copy);
+});
+
+test('every start of "Updated from disk" changes the status and pushes a state; the end clears it', (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const { Document } = require('../src/document');
+  const pushes = [];
+  const doc = Object.create(Document.prototype);
+  Object.assign(doc, {
+    status: emptyStatus(), disposed: false, fromDiskTimer: null, name: 'a.ev.html', filePath: '/d/a.ev.html',
+    pending: new Map(), latestChange: 0, savedChange: 0,
+    ui: { update: () => pushes.push(doc.status.updatedFromDisk) },
+  });
+  doc.showUpdatedFromDisk();
+  doc.showUpdatedFromDisk(); // a second reload within the period
+  assert.equal(pushes.length, 2, 'the restart pushed a state too');
+  assert.notEqual(pushes[0], pushes[1]);
+  assert.ok(pushes[0] && pushes[1]);
+  t.mock.timers.tick(4000);
+  assert.deepEqual(pushes.slice(2), [0]);
 });
