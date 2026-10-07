@@ -10,7 +10,7 @@ const { sectionHashes, classifyChange, watchFile } = require('./watch');
 const { serveDocument } = require('./protocol');
 const { hardenSession, hardenContents, WEB_PREFERENCES } = require('./security');
 const { SCHEME, originFor } = require('./urls');
-const { errorBox, formatErrorReport } = require('./errors');
+const { showErrorSheet, formatErrorReport } = require('./errors');
 const { emptyStatus, describeStatus } = require('./status');
 const { LoadTags } = require('./load-tags');
 
@@ -445,12 +445,8 @@ class Document {
   // once the document is closed (closing aborts a load). Never rejects.
   async reportError(action, err) {
     if (this.disposed) return;
-    const { report, options } = errorBox({ action, filePath: this.filePath, err });
-    try {
-      if (await this.ui.sheet(options) === 0) clipboard.writeText(report);
-    } catch (sheetErr) {
-      console.error(report, sheetErr);
-    }
+    await showErrorSheet((options) => this.ui.sheet(options), { action, filePath: this.filePath, err },
+      { copy: (text) => clipboard.writeText(text) });
   }
 
   // Errors while checking the disk: the status keeps the newest report

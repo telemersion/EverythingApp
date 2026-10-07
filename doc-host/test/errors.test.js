@@ -2,7 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { formatErrorReport, errorBox } = require('../src/errors');
+const { formatErrorReport, errorBox, showErrorSheet } = require('../src/errors');
 const { version } = require('../package.json');
 
 test('the error report names action, file, message, stack and versions', () => {
@@ -33,4 +33,44 @@ test('the error sheet shows the headline and the report, with Copy report first'
     defaultId: 1,
     cancelId: 1,
   });
+});
+
+async function runSheet(result) {
+  const copied = [];
+  const logged = [];
+  const shown = [];
+  const sheet = async (options) => {
+    shown.push(options);
+    if (result instanceof Error) throw result;
+    return result;
+  };
+  const err = new Error('disk on fire');
+  await showErrorSheet(sheet, { action: 'load', filePath: '/tmp/a.ev.html', err },
+    { copy: (t) => copied.push(t), log: (...a) => logged.push(a) });
+  return { copied, logged, shown, report: errorBox({ action: 'load', filePath: '/tmp/a.ev.html', err }).report };
+}
+
+test('showErrorSheet copies the report on "Copy report"', async () => {
+  const r = await runSheet(0);
+  assert.equal(r.shown.length, 1);
+  assert.deepEqual(r.copied, [r.report]);
+  assert.deepEqual(r.logged, []);
+});
+
+test('showErrorSheet does nothing more on OK', async () => {
+  const r = await runSheet(1);
+  assert.deepEqual(r.copied, []);
+  assert.deepEqual(r.logged, []);
+});
+
+test('showErrorSheet logs the report when no sheet can show', async () => {
+  const r = await runSheet(null);
+  assert.deepEqual(r.copied, []);
+  assert.deepEqual(r.logged, [[r.report]]);
+});
+
+test('showErrorSheet logs the report and the failure when the sheet throws, and never rejects', async () => {
+  const boom = new Error('no window');
+  const r = await runSheet(boom);
+  assert.deepEqual(r.logged, [[r.report, boom]]);
 });

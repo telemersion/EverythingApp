@@ -40,4 +40,18 @@ function errorBox({ action, filePath, err }) {
   };
 }
 
-module.exports = { formatErrorReport, errorBox };
+// Shows the error report through `sheet` (button index, or null when no sheet
+// can show). "Copy report" copies; with no sheet, or a failing one, the report
+// is logged instead. Never rejects.
+async function showErrorSheet(sheet, { action, filePath, err }, { copy, log = console.error }) {
+  const { report, options } = errorBox({ action, filePath, err });
+  try {
+    const choice = await sheet(options);
+    if (choice === 0) copy(report);
+    if (choice === null) log(report);
+  } catch (sheetErr) {
+    log(report, sheetErr);
+  }
+}
+
+module.exports = { formatErrorReport, errorBox, showErrorSheet };

@@ -14,7 +14,7 @@ const {
 const { readDocumentFile } = require('./open');
 const { Document } = require('./document');
 const { Registry } = require('./registry');
-const { errorBox } = require('./errors');
+const { showErrorSheet } = require('./errors');
 const { updateMenu } = require('./menu');
 
 const DEFAULT_SIZE = { width: 1280, height: 860 };
@@ -296,14 +296,8 @@ class Workspace {
   // An unexpected error, as a sheet with the error report ("Copy report");
   // logged if no sheet can be shown. Never rejects.
   async showError({ action, filePath, err }) {
-    const { report, options } = errorBox({ action, filePath, err });
-    try {
-      const choice = await this.sheet(options);
-      if (choice === 0) clipboard.writeText(report);
-      if (choice === null) console.error(report);
-    } catch (sheetErr) {
-      console.error(report, sheetErr);
-    }
+    await showErrorSheet((options) => this.sheet(options), { action, filePath, err },
+      { copy: (text) => clipboard.writeText(text) });
   }
 
   // ---------- Closing ----------
