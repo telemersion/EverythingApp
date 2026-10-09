@@ -24,10 +24,11 @@ function loadPage() {
   const { window } = dom;
   const sent = [];
   let onState = null;
-  window.evUi = { onState: (cb) => { onState = cb; }, onThumbnail: () => {}, send: (intent) => sent.push(JSON.parse(JSON.stringify(intent))) }; // a copy, as over IPC
+  let onThumbnail = null;
+  window.evUi = { onState: (cb) => { onState = cb; }, onThumbnail: (cb) => { onThumbnail = cb; }, send: (intent) => sent.push(JSON.parse(JSON.stringify(intent))) }; // a copy, as over IPC
   window.eval(read('ui.js'));
   assert.equal(typeof onState, 'function', 'ui.js listens for states');
-  return { window, document: window.document, sent, render: (state) => onState(state) };
+  return { window, document: window.document, sent, render: (state) => onState(state), thumbnail: (docId, url) => onThumbnail(docId, url) };
 }
 
 function stateOf(model, documents, { notice = null } = {}) {
@@ -389,4 +390,47 @@ test('blur and a dragging false state end a divider drag', () => {
     pointer('pointerup', 500, 300);
     assert.equal(sent.length, 2, 'the release sends nothing more');
   }
+});
+
+const JPEG = 'data:image/jpeg;base64,/9j/AAAA';
+const thumbsState = () => {
+  const state = twoPanes();
+  state.list = { ...state.list, mode: 'thumbnails' };
+  return state;
+};
+
+test('thumbnails mode: a placeholder with label and document type until the picture arrives, then the image', () => {
+  const { document, render, thumbnail } = loadPage();
+  render(thumbsState());
+  const entry = (id) => document.querySelector(`#entries .entry[data-doc-id="${id}"]`);
+  assert.ok(document.getElementById('list').classList.contains('thumbnails'));
+  const placeholder = entry('b').querySelector('.thumb.placeholder');
+  assert.equal(placeholder.querySelector('.label').textContent, '<b>bold.ev.html');
+  assert.equal(placeholder.querySelector('.doc-type').textContent, 'note');
+  assert.equal(entry('b').querySelector('img'), null);
+  thumbnail('b', JPEG);
+  const img = entry('b').querySelector('.thumb img');
+  assert.equal(img.getAttribute('src'), JPEG);
+  assert.equal(img.style.width, '224px', 'the list width (240) minus 16');
+  assert.equal(entry('b').querySelector('.thumb.placeholder'), null);
+  assert.equal(entry('b').querySelector('.caption .label').textContent, '<b>bold.ev.html', 'the label below');
+  assert.ok(entry('a').querySelector('.thumb.placeholder'), 'the others keep theirs');
+  // The same picture again keeps the element.
+  thumbnail('b', JPEG);
+  assert.equal(entry('b').querySelector('img'), img);
+});
+
+test('thumbnails only show in thumbnails mode, and only JPEG data URLs are accepted', () => {
+  const { document, render, thumbnail } = loadPage();
+  render(thumbsState());
+  for (const bad of ['https://example.com/x.jpg', 'data:image/png;base64,AAAA', 'data:text/html,<b>x</b>', 42, null]) thumbnail('a', bad);
+  assert.equal(document.querySelectorAll('#entries img').length, 0);
+  thumbnail('a', JPEG);
+  assert.equal(document.querySelectorAll('#entries img').length, 1);
+  const listState = twoPanes();
+  render(listState);
+  assert.equal(document.querySelectorAll('#entries img, #entries .thumb').length, 0, 'list mode draws none');
+  assert.ok(!document.getElementById('list').classList.contains('thumbnails'));
+  render(thumbsState());
+  assert.equal(document.querySelectorAll('#entries img').length, 1, 'the page remembered it');
 });

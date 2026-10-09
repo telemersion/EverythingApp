@@ -32,8 +32,9 @@ function prepareSession(ses, allowDevTools) {
 // contents, checks each intent (ui-intents.js) and hands it to onIntent.
 // Its session and preload are its own; no document shares them.
 class HostUi {
-  constructor({ win, onIntent, allowDevTools = false }) {
+  constructor({ win, onIntent, onLoad = () => {}, allowDevTools = false }) {
     this.win = win;
+    this.onLoad = onLoad;
     this.onIntent = onIntent;
     this.state = null;          // the newest state
     this.timer = null;          // the scheduled send
@@ -63,6 +64,7 @@ class HostUi {
     wc.on('did-finish-load', () => {
       this.loaded = true;
       this.schedule();
+      this.onLoad(); // the page knows nothing yet
     });
     // First child: beneath every document view. The workspace keeps the
     // bounds at the whole content area.
@@ -99,7 +101,7 @@ class HostUi {
     wc.send('ui:state', { ...this.state, dragging: this.raised });
   }
 
-  // A document's thumbnail (Task 12).
+  // A document's thumbnail: a data:image/jpeg;base64 URL.
   pushThumbnail(docId, dataUrl) {
     const wc = this.view.webContents;
     if (!this.disposed && this.loaded && !wc.isDestroyed()) wc.send('ui:thumbnail', docId, dataUrl);

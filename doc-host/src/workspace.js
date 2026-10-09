@@ -16,6 +16,8 @@ const { parseDocument } = require('./frame');
 const { Document } = require('./document');
 const { Registry } = require('./registry');
 const { HostUi } = require('./host-ui');
+const { createThumbnailTriggers } = require('./thumbnail-triggers');
+const { captureThumbnail } = require('./thumbnails');
 const { buildUiState } = require('./ui-state');
 const { showErrorSheet } = require('./errors');
 const { updateMenu } = require('./menu');
@@ -24,6 +26,7 @@ const DEFAULT_SIZE = { width: 1280, height: 860 };
 // Above the 200 px that workspace.json requires of the saved bounds.
 const MIN_SIZE = { minWidth: 400, minHeight: 300 };
 const SUMMARY_NAMES = 10;
+const THUMBNAIL_MARGIN = 16; // thumbnail width = list width - 16
 
 // The detail of the close summary: up to ten labels, then the rest as a count.
 function closeSummaryDetail(labels) {
@@ -76,6 +79,18 @@ class Workspace {
     this.restoring = false;
     this.quitting = null;        // the running quit()
     this.quitConfirmed = false;
+    // Thumbnails: the newest data URL per document (memory only), when to
+    // capture (thumbnail-triggers.js), and every capture asked for (the smoke
+    // test reads thumbnailCaptures).
+    this.thumbnails = new Map();
+    this.thumbnailCaptures = [];
+    this.captureSeq = new Map();  // docId → the newest capture asked for
+    this.shown = new Set();       // ids of the documents whose view is visible
+    this.unshownLoads = new Set(); // loaded while hidden, not captured: captured when first shown
+    this.thumbnailTriggers = createThumbnailTriggers({
+      capture: (docId, reason) => this.captureThumbnail(docId, reason),
+      captureHidden: false, // a view never shown cannot be captured
+    });
 
     // Hidden until restore() has given it its bounds.
     this.win = new BaseWindow({ ...DEFAULT_SIZE, ...MIN_SIZE, title: 'EverythingApp', show: false });
@@ -89,7 +104,12 @@ class Workspace {
       this.quit();
     });
     // The first child of the window; document views go above it.
-    this.hostUi = new HostUi({ win: this.win, onIntent: (intent) => this.handleIntent(intent), allowDevTools });
+    this.hostUi = new HostUi({
+      win: this.win,
+      onIntent: (intent) => this.handleIntent(intent),
+      onLoad: () => this.sendThumbnails(),
+      allowDevTools,
+    });
     this.hostUi.ready.catch((err) => this.showError({ action: 'show the document list and tabs', err }));
     // Split Right's shortcut, for layouts where the menu accelerator does not fire.
     this.onInput = (event, input) => this.handleInput(event, input);
@@ -185,9 +205,16 @@ class Workspace {
       ui: {
         sheet: (options) => this.sheet(options),
         update: () => this.apply(this.model),
-        rendered: () => {}, // thumbnails: Task 12
+        rendered: (reason) => this.rendered(doc, reason),
       },
     });
+    // Every accepted change of a document that is on screen.
+    const onDirty = doc.onDirty.bind(doc);
+    doc.onDirty = (payload) => {
+      const before = doc.latestChange;
+      onDirty(payload);
+      if (doc.latestChange !== before) this.thumbnailTriggers.changed(doc.id, this.shown.has(doc.id));
+    };
     this.registry.add(doc);
     doc.view.setVisible(false);
     doc.view.webContents.on('before-input-event', this.onInput);
@@ -209,6 +236,11 @@ class Workspace {
 
   // Removes a document from the window and the registry, and disposes it.
   forget(doc) {
+    this.thumbnailTriggers.forget(doc.id);
+    this.thumbnails.delete(doc.id);
+    this.captureSeq.delete(doc.id);
+    this.shown.delete(doc.id);
+    this.unshownLoads.delete(doc.id);
     this.registry.remove(doc);
     if (!doc.view.webContents.isDestroyed()) doc.view.webContents.removeListener('before-input-event', this.onInput);
     if (!this.win.isDestroyed()) this.win.contentView.removeChildView(doc.view);
@@ -266,9 +298,65 @@ class Workspace {
         const doc = this.documentById(docId);
         if (!doc) continue;
         doc.view.setBounds(rect);
-        doc.view.setVisible(docId === pane.selected);
+        const visible = docId === pane.selected;
+        doc.view.setVisible(visible);
+        this.visibilityChanged(docId, visible);
       }
     }
+    // A document in no pane (closing) is not shown, and not captured.
+    const inPane = new Set(this.layout.panes.flatMap(({ paneId }) => wm.findNode(this.model, paneId).tabs));
+    for (const docId of [...this.shown]) if (!inPane.has(docId)) this.shown.delete(docId);
+  }
+
+  // ---------- Thumbnails ----------
+
+  // A document became visible or hidden (called for every document on every layout).
+  visibilityChanged(docId, visible) {
+    const was = this.shown.has(docId);
+    if (visible === was) return;
+    if (visible) {
+      this.shown.add(docId);
+      // Its first load went uncaptured because the view was hidden.
+      if (this.unshownLoads.delete(docId)) this.thumbnailTriggers.loaded(docId, true);
+    } else {
+      this.shown.delete(docId);
+      this.thumbnailTriggers.hidden(docId);
+    }
+  }
+
+  // Document.ui.rendered: the page loaded, saved or reloaded.
+  rendered(doc, reason) {
+    if (reason === 'load') {
+      if (this.shown.has(doc.id)) this.thumbnailTriggers.loaded(doc.id, true);
+      else this.unshownLoads.add(doc.id);
+    } else if (reason === 'save') {
+      this.thumbnailTriggers.saved(doc.id);
+    } else if (reason === 'reload') {
+      this.thumbnailTriggers.reloaded(doc.id);
+    }
+  }
+
+  // Captures the document's view at the list's thumbnail width in device
+  // pixels, keeps the newest result per document and sends it to the host UI.
+  // A failed capture keeps the thumbnail it had. Never rejects.
+  async captureThumbnail(docId, reason) {
+    this.thumbnailCaptures.push([docId, reason]);
+    const doc = this.documentById(docId);
+    if (!doc || this.win.isDestroyed()) return;
+    const seq = (this.captureSeq.get(docId) || 0) + 1;
+    this.captureSeq.set(docId, seq);
+    const scale = screen.getDisplayMatching(this.win.getBounds()).scaleFactor || 1;
+    const width = Math.round((this.model.list.width - THUMBNAIL_MARGIN) * scale);
+    const dataUrl = await captureThumbnail(doc.view.webContents, { width });
+    // Closed meanwhile, or a newer capture was asked for.
+    if (dataUrl === null || this.captureSeq.get(docId) !== seq || this.documentById(docId) !== doc) return;
+    this.thumbnails.set(docId, dataUrl);
+    this.hostUi.pushThumbnail(docId, dataUrl);
+  }
+
+  // The host UI page (re)loaded: it knows no thumbnails.
+  sendThumbnails() {
+    for (const [docId, dataUrl] of this.thumbnails) this.hostUi.pushThumbnail(docId, dataUrl);
   }
 
   updateTitle() {

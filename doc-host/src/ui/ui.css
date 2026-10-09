@@ -166,6 +166,61 @@ button:focus-visible {
   white-space: nowrap;
 }
 
+.entry .caption {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+}
+
+/* Thumbnails mode: the picture above the label, 8 px either side. */
+.list.thumbnails .entry {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  height: auto;
+  padding: 8px;
+}
+
+.list.thumbnails .entry .caption {
+  max-width: 100%;
+}
+
+.thumb {
+  box-sizing: border-box;
+  overflow: hidden;
+}
+
+.thumb img {
+  display: block;
+  height: auto;
+}
+
+.thumb.placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  aspect-ratio: 3 / 2;
+  padding: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text-dim);
+  text-align: center;
+}
+
+.thumb.placeholder .label {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.thumb.placeholder .doc-type {
+  font-size: 11px;
+}
+
 .entry:hover {
   background: var(--hover);
 }

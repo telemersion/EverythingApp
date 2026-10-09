@@ -16,6 +16,8 @@
     'kit-update': { glyph: '↑', title: 'Kit update available' },
   };
   const SHOWN_BANNERS = 3;
+  const THUMBNAIL_MARGIN = 16;  // thumbnail width = list width - 16
+  const JPEG_DATA_URL = 'data:image/jpeg;base64,';
   const DRAG_THRESHOLD = 4;     // px the pointer moves with the button down before a tab drag starts
   const EDGE_ZONE = 0.25;       // the outer quarter of a pane's document area splits
 
@@ -26,6 +28,9 @@
   let drag = null;              // the running tab drag, see startTabDrag
   let splitDrag = null;         // the running divider drag: { seenRaised, end }
   let swallowClick = false;     // the click that ends a drag selects nothing
+  const thumbnails = new Map(); // docId → data URL of the newest thumbnail (the page keeps them; the main process resends after a reload)
+  const seenDocs = new Set();   // docIds that were in a state
+  const thumbImages = new Map(); // docId → <img>, kept across states so a picture is not decoded again
   const fadeStarts = new Map(); // `${docId}:${kind}` → { key, start }: the period (fadeKey) and when it first showed
 
   const send = (intent) => window.evUi.send(intent);
@@ -127,16 +132,48 @@
     byId('notice-items').replaceChildren(...notice.items.map((item) => element('li', null, `${item.label} — ${item.reason}`)));
   }
 
+  const thumbsMode = () => state.list.mode === 'thumbnails';
+
+  // The picture of a document as last seen, at the list width minus 16 px
+  // (the height follows the picture), or a placeholder box with its label and
+  // document type until there is one.
+  function thumbnailBox(tab) {
+    const box = element('div', 'thumb');
+    const width = Math.max(0, state.layout.list.width - THUMBNAIL_MARGIN);
+    box.style.width = `${width}px`;
+    const url = thumbnails.get(tab.docId);
+    if (url) {
+      let img = thumbImages.get(tab.docId);
+      if (!img) {
+        img = document.createElement('img');
+        img.alt = '';
+        img.draggable = false;
+        thumbImages.set(tab.docId, img);
+      }
+      if (img.getAttribute('src') !== url) img.src = url;
+      img.style.width = `${width}px`;
+      box.append(img);
+    } else {
+      box.classList.add('placeholder');
+      const info = state.documents[tab.docId];
+      box.append(element('span', 'label', tab.label), element('span', 'doc-type', info ? info.docType : ''));
+    }
+    return box;
+  }
+
   function listEntry(pane, tab, activeDocId) {
     const entry = element('div', 'entry');
     entry.dataset.docId = tab.docId;
     entry.title = tab.path;
     entry.classList.toggle('selected', tab.docId === pane.selected);
     entry.classList.toggle('active', tab.docId === activeDocId);
-    entry.append(element('span', 'label', tab.label));
-    if (tab.dirty) entry.append(element('span', 'dirty', '•'));
+    if (thumbsMode()) entry.append(thumbnailBox(tab));
+    const caption = element('div', 'caption');
+    entry.append(caption);
+    caption.append(element('span', 'label', tab.label));
+    if (tab.dirty) caption.append(element('span', 'dirty', '•'));
     const info = state.documents[tab.docId];
-    for (const kind of info ? info.badges : []) entry.append(badgeIcon(kind));
+    for (const kind of info ? info.badges : []) caption.append(badgeIcon(kind));
     entry.addEventListener('click', () => send({ type: 'select', docId: tab.docId }));
     return entry;
   }
@@ -155,7 +192,18 @@
       if (i > 0) nodes.push(element('div', 'separator'));
       for (const tab of pane.tabs) nodes.push(listEntry(pane, tab, activeDocId));
     });
+    list.classList.toggle('thumbnails', thumbsMode());
     byId('entries').replaceChildren(...nodes);
+    const live = new Set(state.panes.flatMap((pane) => pane.tabs.map((tab) => tab.docId)));
+    // A thumbnail can arrive before the state that lists its document: forget
+    // only the documents that were listed once and are gone.
+    for (const id of [...seenDocs]) {
+      if (live.has(id)) continue;
+      seenDocs.delete(id);
+      thumbnails.delete(id);
+      thumbImages.delete(id);
+    }
+    for (const id of live) seenDocs.add(id);
   }
 
   // Dragging the list's right edge sets its width.
@@ -507,6 +555,13 @@
     renderDividers();
     renderEmpty();
   }
+
+  // Only JPEG data URLs are pictures; anything else is dropped.
+  window.evUi.onThumbnail((docId, dataUrl) => {
+    if (typeof docId !== 'string' || typeof dataUrl !== 'string' || !dataUrl.startsWith(JPEG_DATA_URL)) return;
+    thumbnails.set(docId, dataUrl);
+    if (state && thumbsMode()) renderList();
+  });
 
   window.evUi.onState((next) => {
     state = next;

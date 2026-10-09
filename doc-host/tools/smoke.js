@@ -795,6 +795,62 @@ async function run(dir) {
   await until('lowered by the reload', () => children()[0] === hostUi.view && hostUi.raised === false);
   await until('the page is back with the newest state', async () => (await ui('document.querySelectorAll(".strip .tab").length')) > 0);
 
+  // ---------- Thumbnails ----------
+  // Whether an image has content depends on a display surface; the smoke test
+  // counts what was asked for, through workspace.thumbnailCaptures.
+  const captured = (from) => workspace.thumbnailCaptures.slice(from);
+  const captureCount = () => workspace.thumbnailCaptures.length;
+  // A pane with two tabs: one visible, one hidden.
+  const paneWithTwo = panesInOrder(workspace.model).find((pane) => pane.tabs.length >= 2);
+  assert.ok(paneWithTwo, 'a pane with two tabs');
+  const shownId = paneWithTwo.selected;
+  const hiddenId = paneWithTwo.tabs.find((id) => id !== shownId);
+  const shownDoc = workspace.documentById(shownId);
+  workspace.select(shownId);
+  await wait(300); // let the captures of earlier steps settle
+
+  step('switching tabs captures the document that was left');
+  let mark = captureCount();
+  workspace.select(hiddenId);
+  assert.deepEqual(captured(mark), [[shownId, 'hidden']]);
+
+  step('saving captures the document');
+  workspace.select(shownId);
+  mark = captureCount();
+  assert.equal(await shownDoc.save(), true);
+  assert.ok(captured(mark).some(([id, reason]) => id === shownId && reason === 'saved'), 'a save capture');
+
+  step('an edit captures the visible document 2 seconds after the last change');
+  await wait(100);
+  mark = captureCount();
+  const editedAt = Date.now();
+  await shownDoc.view.webContents.executeJavaScript('document.getElementById("add").click()');
+  await until('the edit is seen', () => shownDoc.isDirty);
+  await wait(1200);
+  assert.deepEqual(captured(mark).filter(([id]) => id === shownId), [], 'not yet');
+  await until('the change capture', () => captured(mark).some(([id, reason]) => id === shownId && reason === 'changed'), 3000);
+  assert.ok(Date.now() - editedAt >= 1900, 'after about 2 seconds of quiet');
+
+  step('a hidden document is not captured for its changes');
+  workspace.select(hiddenId);
+  await wait(100);
+  mark = captureCount();
+  await workspace.documentById(shownId).view.webContents.executeJavaScript('document.getElementById("add").click()');
+  await wait(2500);
+  assert.deepEqual(captured(mark), []);
+
+  step('the host UI gets every known thumbnail again after it reloads');
+  const fakeUrl = 'data:image/jpeg;base64,/9j/AAAA';
+  workspace.thumbnails.set(hiddenId, fakeUrl);
+  workspace.setList({ mode: 'thumbnails' });
+  hostUi.view.webContents.reload();
+  const imgSrc = () => ui(`document.querySelector('#entries .entry[data-doc-id="${hiddenId}"] .thumb img')?.getAttribute('src') ?? null`);
+  await until('the thumbnail is drawn again', async () => (await imgSrc()) === fakeUrl);
+  assert.equal(await ui(`document.querySelectorAll('#entries .thumb img, #entries .thumb.placeholder').length`),
+    workspace.openDocuments().length, 'a picture or a placeholder for each document');
+  workspace.setList({ mode: 'list' });
+  await until('list mode draws no pictures', async () => (await ui(`document.querySelectorAll('#entries img').length`)) === 0);
+
   step('the empty state appears when the last document closes');
   answer(1, 1); // Don't save (hours, to-do list); the other hours sheet is clean
   for (const d of workspace.openDocuments()) {
