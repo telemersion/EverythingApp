@@ -381,4 +381,4 @@ M1 tasks, in order:
 10. Adapt `hours-sheet.html` to the specification (frame, sections, kit, `ev` names, no own Save button under the host) and use it as the first fixture.
 11. Walk through the acceptance criteria in the user story.
 
-M1 passed its acceptance criteria on 2026-10-07. M2 passed its acceptance walk-through on 2026-10-09, results in [docs/plans/m2-workspace.md](docs/plans/m2-workspace.md); M3 is planned once M2 passes.
+M1 passed its acceptance criteria on 2026-10-07. M2 passed its acceptance walk-through on 2026-10-09, results in [docs/plans/m2-workspace.md](docs/plans/m2-workspace.md); M3 is planned next.

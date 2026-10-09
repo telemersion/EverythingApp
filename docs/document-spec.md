@@ -85,10 +85,16 @@ The file ends with a single line break after `</html>`.
 The kit runs before the script section and defines `window.EvKit`.
 
 ```js
-const doc = EvKit.init({ onDirtyChange: (dirty) => showStatus(dirty) });
+const doc = EvKit.init();
 const data = doc.data;        // the parsed data block; change it in place
 // … render into document.getElementById('ev-app') …
 doc.changed();                // call after every change to data
+```
+
+```html
+<!-- The kit hides both inside the host and wires them in a browser. -->
+<button data-ev-fallback="save">Save</button>
+<span data-ev-fallback="status"></span>
 ```
 
 `EvKit.init(options)` may be called exactly once. Options (all optional):
