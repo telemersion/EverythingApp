@@ -851,6 +851,17 @@ async function run(dir) {
   workspace.setList({ mode: 'list' });
   await until('list mode draws no pictures', async () => (await ui(`document.querySelectorAll('#entries img').length`)) === 0);
 
+  step('the View menu marks the current list mode');
+  const getMenuItemById = (id) => menu.getMenuItemById(id);
+  const initialMode = workspace.model.list.mode;
+  workspace.setList({ mode: 'list' });
+  assert.equal(getMenuItemById('list-mode-list').checked, true, 'list mode is marked');
+  assert.equal(getMenuItemById('list-mode-thumbnails').checked, false, 'thumbnails mode is not marked');
+  workspace.setList({ mode: 'thumbnails' });
+  assert.equal(getMenuItemById('list-mode-list').checked, false, 'list mode is not marked');
+  assert.equal(getMenuItemById('list-mode-thumbnails').checked, true, 'thumbnails mode is marked');
+  workspace.setList({ mode: initialMode });
+
   step('a document loaded hidden is captured once, after a paint delay, when first shown');
   const lateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'ev-late-'));
   const latePath = path.join(lateDir, 'late.ev.html');

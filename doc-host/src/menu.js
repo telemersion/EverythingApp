@@ -113,8 +113,9 @@ function updateMenu(menu, workspace) {
   item('split-down').enabled = canSplit;
   const { list } = workspace.model;
   item('list-visible').checked = list.visible;
-  item('list-mode-list').checked = list.mode === 'list';
-  item('list-mode-thumbnails').checked = list.mode === 'thumbnails';
+  // Assigning `checked` on a radio item always checks it (Electron ignores the value),
+  // so check only the current mode's item; the group unchecks the other.
+  item(list.mode === 'thumbnails' ? 'list-mode-thumbnails' : 'list-mode-list').checked = true;
 }
 
 module.exports = { buildMenu, updateMenu };
