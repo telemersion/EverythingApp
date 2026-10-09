@@ -40,6 +40,7 @@ class HostUi {
     this.lastSent = -Infinity;  // when a state last went out
     this.loaded = false;        // the page has loaded once
     this.disposed = false;
+    this.raised = false;        // above the documents, transparent: a drag runs
 
     const ses = session.fromPartition(PARTITION);
     const hardened = prepareSession(ses, allowDevTools);
@@ -83,7 +84,7 @@ class HostUi {
       const wc = this.view.webContents;
       if (this.disposed || wc.isDestroyed()) return;
       this.lastSent = Date.now();
-      wc.send('ui:state', this.state);
+      wc.send('ui:state', { ...this.state, dragging: this.raised });
     }, delay);
   }
 
@@ -93,7 +94,28 @@ class HostUi {
     if (!this.disposed && this.loaded && !wc.isDestroyed()) wc.send('ui:thumbnail', docId, dataUrl);
   }
 
-  // raise() and lower() for drags come in Task 11.
+  // During a drag: the view goes on top of the documents with a transparent
+  // background, so the page can draw drop markers over them (the page drops
+  // its own backgrounds when it sees dragging: true).
+  raise() {
+    if (this.disposed || this.raised || this.win.isDestroyed()) return;
+    this.raised = true;
+    this.view.setBackgroundColor('#00000000');
+    this.win.contentView.addChildView(this.view); // re-adding puts it on top
+    this.schedule();
+  }
+
+  // Back beneath every document, opaque. Never left on top: the documents
+  // would be unusable.
+  lower() {
+    if (this.disposed || !this.raised) return;
+    this.raised = false;
+    if (!this.win.isDestroyed()) {
+      this.win.contentView.addChildView(this.view, 0);
+      this.view.setBackgroundColor('#ffffffff');
+    }
+    this.schedule();
+  }
 
   dispose() {
     if (this.disposed) return;

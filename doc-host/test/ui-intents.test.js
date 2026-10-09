@@ -126,3 +126,12 @@ test('the host-UI preload splits drops by the same MAX_OPEN_FILES', () => {
   assert.ok(match, 'ui-preload defines MAX_OPEN_FILES');
   assert.equal(Number(match[1]), MAX_OPEN_FILES);
 });
+
+test('move-tab, split and drag intents', () => {
+  assert.deepEqual(parseIntent({ type: 'split', docId: 'd1', paneId: 'p1', edge: 'top' }, ids), { type: 'split', docId: 'd1', paneId: 'p1', edge: 'top' });
+  assert.equal(parseIntent({ type: 'split', docId: 'd1', paneId: 'p1', edge: 'middle' }, ids), null);
+  assert.equal(parseIntent({ type: 'move-tab', docId: 'd1', paneId: 'p1', index: -1 }, ids), null);
+  assert.equal(parseIntent({ type: 'move-tab', docId: 'd1', paneId: 'p1', index: 1.5 }, ids), null);
+  assert.equal(parseIntent({ type: 'drag', active: 1 }, ids), null);
+  assert.deepEqual(parseIntent({ type: 'drag', active: true }, ids), { type: 'drag', active: true });
+});

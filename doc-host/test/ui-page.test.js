@@ -246,3 +246,88 @@ test('the fade of "Updated from disk" is keyed on the main process fadeKey', () 
   push(3); // and a later restart shows it again
   assert.equal(delay(), '0ms');
 });
+
+// ---------- Dragging tabs ----------
+
+// Pointer events on a tab, with pointer capture and tab rectangles stubbed
+// (jsdom has neither): each tab is 100 px wide, side by side in its strip.
+function dragSetup() {
+  const page = loadPage();
+  const state = twoPanes();
+  page.render(state);
+  const { window, document } = page;
+  window.HTMLElement.prototype.setPointerCapture = () => {};
+  for (const strip of document.querySelectorAll('.strip')) {
+    const rect = state.layout.panes.find((p) => p.paneId === strip.dataset.paneId).tabStrip;
+    [...strip.querySelectorAll('.tab')].forEach((tab, i) => {
+      tab.getBoundingClientRect = () => ({ left: rect.x + i * 100, right: rect.x + i * 100 + 100, width: 100, top: rect.y, bottom: rect.y + rect.height, height: rect.height });
+    });
+  }
+  const tab = (docId) => document.querySelector(`.strip .tab[data-doc-id="${docId}"]`);
+  const fire = (el, type, x, y) => el.dispatchEvent(new window.MouseEvent(type, { bubbles: true, clientX: x, clientY: y, button: 0 }));
+  const pointer = (el, type, x, y) => {
+    const event = new window.MouseEvent(type, { bubbles: true, clientX: x, clientY: y, button: 0 });
+    Object.defineProperty(event, 'pointerId', { value: 1 });
+    el.dispatchEvent(event);
+  };
+  return { ...page, state, tab, pointer, fire };
+}
+
+test('a tab drag starts after 4 px; a click or a shorter move sends nothing', () => {
+  const { state, tab, pointer, sent } = dragSetup();
+  const p1 = state.layout.panes[0].tabStrip;
+  pointer(tab('a'), 'pointerdown', p1.x + 10, p1.y + 10);
+  pointer(tab('a'), 'pointermove', p1.x + 12, p1.y + 12);
+  pointer(tab('a'), 'pointerup', p1.x + 12, p1.y + 12);
+  assert.deepEqual(sent, []);
+});
+
+test('dropping on the right quarter of another pane splits, in its centre moves, in a strip moves to the index', () => {
+  const run = (target) => {
+    const { state, tab, pointer, sent, document } = dragSetup();
+    const p1 = state.layout.panes[0];
+    const p2 = state.layout.panes[1];
+    const at = target(p1, p2);
+    pointer(tab('a'), 'pointerdown', p1.tabStrip.x + 10, p1.tabStrip.y + 10);
+    pointer(tab('a'), 'pointermove', p1.tabStrip.x + 20, p1.tabStrip.y + 10);
+    pointer(tab('a'), 'pointermove', at.x, at.y);
+    const marker = document.getElementById('drop-marker');
+    const shown = marker.hidden ? null : { left: marker.style.left, width: marker.style.width };
+    pointer(tab('a'), 'pointerup', at.x, at.y);
+    return { sent, shown, p2 };
+  };
+  let r = run((p1, p2) => ({ x: p2.document.x + p2.document.width - 5, y: p2.document.y + p2.document.height / 2 }));
+  assert.deepEqual(r.sent, [{ type: 'drag', active: true }, { type: 'split', docId: 'a', paneId: 'p2', edge: 'right' }, { type: 'drag', active: false }]);
+  assert.equal(r.shown.width, `${Math.floor(r.p2.document.width / 2)}px`, 'half the pane');
+  r = run((p1, p2) => ({ x: p2.document.x + p2.document.width / 2, y: p2.document.y + p2.document.height / 2 }));
+  assert.deepEqual(r.sent[1], { type: 'move-tab', docId: 'a', paneId: 'p2', index: 1 });
+  r = run((p1, p2) => ({ x: p2.tabStrip.x + 10, y: p2.tabStrip.y + 10 }));
+  assert.deepEqual(r.sent[1], { type: 'move-tab', docId: 'a', paneId: 'p2', index: 0 });
+  r = run((p1) => ({ x: p1.tabStrip.x + 150, y: p1.tabStrip.y + 10 })); // past b's centre? b sits at 100-200: its centre is 150
+  assert.equal(r.sent[1].index, 0, 'among the other tabs only');
+});
+
+test('releasing over nothing, pointercancel and lostpointercapture cancel, and every end sends drag false', () => {
+  for (const end of ['outside', 'pointercancel', 'lostpointercapture']) {
+    const { state, tab, pointer, sent } = dragSetup();
+    const p1 = state.layout.panes[0].tabStrip;
+    pointer(tab('a'), 'pointerdown', p1.x + 10, p1.y + 10);
+    pointer(tab('a'), 'pointermove', p1.x + 30, p1.y + 10);
+    if (end === 'outside') pointer(tab('a'), 'pointerup', -20, -20);
+    else pointer(tab('a'), end, p1.x + 30, p1.y + 10);
+    assert.deepEqual(sent, [{ type: 'drag', active: true }, { type: 'drag', active: false }], end);
+  }
+});
+
+test('a pane\'s only tab cannot split itself, and a state mid-drag keeps the dragged tab element', () => {
+  const { state, tab, pointer, sent, render } = dragSetup();
+  const p2 = state.layout.panes[1];
+  const dragged = tab('c');
+  pointer(dragged, 'pointerdown', p2.tabStrip.x + 10, p2.tabStrip.y + 10);
+  pointer(dragged, 'pointermove', p2.tabStrip.x + 30, p2.tabStrip.y + 10);
+  render(state);
+  assert.equal(tab('c'), dragged, 'the same element');
+  pointer(dragged, 'pointermove', p2.document.x + p2.document.width - 5, p2.document.y + 50);
+  pointer(dragged, 'pointerup', p2.document.x + p2.document.width - 5, p2.document.y + 50);
+  assert.deepEqual(sent, [{ type: 'drag', active: true }, { type: 'drag', active: false }]);
+});

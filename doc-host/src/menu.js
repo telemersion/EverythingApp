@@ -1,6 +1,7 @@
 'use strict';
 
 const { Menu, shell } = require('electron');
+const wm = require('./workspace-model');
 
 // Docked DevTools would sit inside the view's own bounds (the host UI lies beneath the documents).
 function toggleDetachedDevTools(contents) {
@@ -14,7 +15,7 @@ const DOCUMENT_ITEMS = ['save', 'close', 'reveal', 'reload', 'dev-tools'];
 // The application menu. Items act on the workspace's active document;
 // workspace.apply() refreshes their enabled and checked states (updateMenu).
 // Menu accelerators fire while a document view has keyboard focus (M2 Task 1
-// spike), so no shortcut needs a before-input-event handler.
+// spike); the one exception is Split Right on some keyboard layouts (below).
 function buildMenu({ workspace, isDev }) {
   const isMac = process.platform === 'darwin';
   // Runs fn; anything it throws is shown as "could not <action> <file>".
@@ -49,7 +50,11 @@ function buildMenu({ workspace, isDev }) {
         { id: 'list-mode-list', label: 'List', type: 'radio', click: () => workspace.setList({ mode: 'list' }) },
         { id: 'list-mode-thumbnails', label: 'Thumbnails', type: 'radio', click: () => workspace.setList({ mode: 'thumbnails' }) },
         { type: 'separator' },
-        // Split Right (split-right) and Split Down (split-down) come in Task 11.
+        // CmdOrCtrl+\ does not fire as an accelerator on every keyboard layout
+        // (Swiss German): the workspace also listens for it (before-input-event).
+        { id: 'split-right', label: 'Split Right', accelerator: 'CmdOrCtrl+\\', click: () => workspace.splitActive('right') },
+        { id: 'split-down', label: 'Split Down', click: () => workspace.splitActive('bottom') },
+        { type: 'separator' },
         { id: 'reload', label: 'Reload', accelerator: 'CmdOrCtrl+R', click: withDoc('reload', (doc) => doc.reloadInteractive()) },
         ...(isDev ? [{
           id: 'dev-tools',
@@ -101,6 +106,11 @@ function updateMenu(menu, workspace) {
   const item = (id) => menu.getMenuItemById(id);
   const hasDocument = workspace.activeDocument() !== null;
   for (const id of DOCUMENT_ITEMS) if (item(id)) item(id).enabled = hasDocument;
+  const docId = wm.activeDocId(workspace.model);
+  const paneId = docId === null ? null : wm.paneOf(workspace.model, docId);
+  const canSplit = paneId !== null && wm.canSplit(workspace.model, docId, paneId);
+  item('split-right').enabled = canSplit;
+  item('split-down').enabled = canSplit;
   const { list } = workspace.model;
   item('list-visible').checked = list.visible;
   item('list-mode-list').checked = list.mode === 'list';

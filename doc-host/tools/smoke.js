@@ -698,6 +698,96 @@ async function run(dir) {
   intentFrom(hostUi.webContentsId, { type: 'select', docId: doc.id });
   assert.equal(activeDocId(workspace.model), doc.id);
 
+  // ---------- Splitting and dragging ----------
+  const children = () => workspace.win.contentView.children;
+  const paneIds = () => panesInOrder(workspace.model).map((pane) => pane.id);
+  const sendIntent = (payload) => intentFrom(hostUi.webContentsId, payload);
+  const splitItem = (id) => menu.getMenuItemById(id);
+  const bounds = (d) => d.view.getBounds();
+
+  step('Split Right moves the active document into a new pane');
+  workspace.select(doc.id);
+  assert.deepEqual(panesInOrder(workspace.model).map((pane) => pane.tabs), [[doc.id, other3.id], [todo3.id]]);
+  assert.equal(splitItem('split-right').enabled, true, 'the pane holds two tabs');
+  assert.equal(splitItem('split-down').enabled, true);
+  workspace.splitActive('right');
+  assert.deepEqual(panesInOrder(workspace.model).map((pane) => pane.tabs), [[other3.id], [doc.id], [todo3.id]]);
+  assert.equal(activeDocId(workspace.model), doc.id);
+  assert.equal(bounds(doc).y, bounds(todo3).y, 'side by side');
+  assert.ok(bounds(doc).x > bounds(other3).x + bounds(other3).width - 1, 'to the right of the other pane');
+  assert.ok(bounds(todo3).x > bounds(doc).x + bounds(doc).width - 1, 'and to the left of the third');
+  await until('the host UI draws three tab strips', async () => (await strips()).length === 3);
+
+  step("Split Right is disabled for a pane's only tab");
+  assert.equal(splitItem('split-right').enabled, false);
+  assert.equal(splitItem('split-down').enabled, false);
+  const unchanged = workspace.model;
+  workspace.splitActive('right');
+  assert.equal(workspace.model, unchanged, 'nothing happens');
+
+  step('a split intent from the host UI splits; a move-tab intent moves back and the pane disappears');
+  sendIntent({ type: 'split', docId: other3.id, paneId: paneOf(workspace.model, todo3.id), edge: 'bottom' });
+  await until('split', () => panesInOrder(workspace.model).some((pane) => pane.tabs.includes(other3.id) && paneOf(workspace.model, todo3.id) !== pane.id));
+  assert.equal(paneIds().length, 3, 'its old pane disappeared, the new one appeared');
+  assert.equal(bounds(other3).x, bounds(todo3).x, 'below the to-do list');
+  assert.ok(bounds(other3).y > bounds(todo3).y);
+  sendIntent({ type: 'split', docId: doc.id, paneId: paneOf(workspace.model, doc.id), edge: 'left' });
+  await wait(100);
+  assert.equal(paneIds().length, 3, 'a split of a pane\'s only tab is ignored');
+  sendIntent({ type: 'move-tab', docId: other3.id, paneId: paneOf(workspace.model, doc.id), index: 0 });
+  await until('moved back', () => paneIds().length === 2);
+  assert.deepEqual(panesInOrder(workspace.model).map((pane) => pane.tabs), [[other3.id, doc.id], [todo3.id]]);
+  assert.equal(activeDocId(workspace.model), other3.id);
+  assert.equal(splitItem('split-right').enabled, true);
+
+  step('Cmd+\\ on a document or the host UI splits right once');
+  const key = (contents, patch) => {
+    let prevented = 0;
+    contents.emit('before-input-event', { preventDefault: () => { prevented += 1; } },
+      { type: 'keyDown', code: 'Backslash', alt: false, shift: false, meta: process.platform === 'darwin', control: process.platform !== 'darwin', ...patch });
+    return prevented;
+  };
+  assert.equal(key(doc.view.webContents, { shift: true }), 0, 'with Shift it is not ours');
+  assert.equal(key(doc.view.webContents, { type: 'keyUp' }), 0);
+  assert.equal(paneIds().length, 2);
+  assert.equal(key(other3.view.webContents), 1);
+  assert.equal(paneIds().length, 3);
+  sendIntent({ type: 'move-tab', docId: other3.id, paneId: paneOf(workspace.model, doc.id), index: 0 });
+  await until('moved back', () => paneIds().length === 2);
+  assert.equal(key(hostUi.view.webContents), 1);
+  assert.equal(paneIds().length, 3);
+  sendIntent({ type: 'move-tab', docId: other3.id, paneId: paneOf(workspace.model, doc.id), index: 0 });
+  await until('moved back', () => paneIds().length === 2);
+
+  step('a drag raises the host UI and ending it lowers it');
+  assert.equal(children()[0], hostUi.view);
+  sendIntent({ type: 'drag', active: true });
+  await until('raised', () => children().at(-1) === hostUi.view);
+  await until('the page drops its backgrounds', async () => (await ui('document.documentElement.classList.contains("dragging")')) === true);
+  sendIntent({ type: 'drag', active: false });
+  await until('lowered', () => children()[0] === hostUi.view);
+  await until('the page draws its backgrounds again', async () => (await ui('document.documentElement.classList.contains("dragging")')) === false);
+  sendIntent({ type: 'drag', active: true });
+  await until('raised again', () => children().at(-1) === hostUi.view);
+  sendIntent({ type: 'select', docId: doc.id }); // any other intent lowers it
+  await until('lowered by another intent', () => children()[0] === hostUi.view);
+  sendIntent({ type: 'drag', active: true });
+  await until('raised for a divider', () => children().at(-1) === hostUi.view);
+  const splitId = workspace.model.root.id;
+  assert.equal(workspace.model.root.kind, 'split');
+  sendIntent({ type: 'resize-split', splitId, sizes: [0.4, 0.6] });
+  await until('resized', () => workspace.model.root.sizes[0] === 0.4);
+  assert.equal(children().at(-1), hostUi.view, 'resizing keeps the host UI raised');
+  sendIntent({ type: 'drag', active: false });
+  await until('lowered', () => children()[0] === hostUi.view);
+
+  step('a drag ends when the window loses focus');
+  sendIntent({ type: 'drag', active: true });
+  await until('raised', () => children().at(-1) === hostUi.view);
+  workspace.win.emit('blur');
+  assert.equal(children()[0], hostUi.view);
+  assert.equal(hostUi.raised, false);
+
   step('the empty state appears when the last document closes');
   answer(1, 1); // Don't save (hours, to-do list); the other hours sheet is clean
   for (const d of workspace.openDocuments()) {

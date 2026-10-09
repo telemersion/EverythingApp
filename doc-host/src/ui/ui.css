@@ -392,3 +392,39 @@ button:focus-visible {
   font-size: 14px;
   padding: 6px 18px;
 }
+
+/* ---------- Dragging ---------- */
+
+/* While a drag runs the host UI lies above the documents: it draws nothing
+   of its own over them but the drop marker and the dragged tab's name. */
+html.dragging,
+html.dragging body {
+  background: transparent;
+}
+
+.tab.dragging {
+  opacity: 0.5;
+}
+
+.drop-marker {
+  position: absolute;
+  box-sizing: border-box;
+  pointer-events: none;
+  background: var(--active);
+  border: 2px solid var(--accent);
+}
+
+.drag-ghost {
+  position: absolute;
+  max-width: 240px;
+  padding: 3px 10px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  pointer-events: none;
+  color: var(--text);
+  background: var(--tab-selected-bg);
+  border: 1px solid var(--accent);
+  border-radius: 5px;
+  opacity: 0.9;
+}

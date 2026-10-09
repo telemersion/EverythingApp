@@ -48,6 +48,8 @@ const INTENT_ACTIONS = {
   'open-files': 'open the dropped files',
   list: 'change the document list',
   'resize-split': 'resize the panes',
+  'move-tab': 'move',
+  split: 'split the panes for',
   'dismiss-notice': 'dismiss the notice',
 };
 
@@ -78,6 +80,8 @@ class Workspace {
     // Hidden until restore() has given it its bounds.
     this.win = new BaseWindow({ ...DEFAULT_SIZE, ...MIN_SIZE, title: 'EverythingApp', show: false });
     this.win.on('resize', () => this.apply(this.model));
+    // A drag never outlives the window's focus: the host UI goes back beneath the documents.
+    this.win.on('blur', () => this.hostUi.lower());
     // Closing the window quits (close summary first).
     this.win.on('close', (event) => {
       if (this.quitConfirmed) return;
@@ -87,6 +91,9 @@ class Workspace {
     // The first child of the window; document views go above it.
     this.hostUi = new HostUi({ win: this.win, onIntent: (intent) => this.handleIntent(intent), allowDevTools });
     this.hostUi.ready.catch((err) => this.showError({ action: 'show the document list and tabs', err }));
+    // Split Right's shortcut, for layouts where the menu accelerator does not fire.
+    this.onInput = (event, input) => this.handleInput(event, input);
+    this.hostUi.view.webContents.on('before-input-event', this.onInput);
   }
 
   // ---------- Queries ----------
@@ -183,6 +190,7 @@ class Workspace {
     });
     this.registry.add(doc);
     doc.view.setVisible(false);
+    doc.view.webContents.on('before-input-event', this.onInput);
     // Document views go above the host-UI view, which comes first.
     this.win.contentView.addChildView(doc.view);
     // Clicking into a document focuses its pane.
@@ -202,6 +210,7 @@ class Workspace {
   // Removes a document from the window and the registry, and disposes it.
   forget(doc) {
     this.registry.remove(doc);
+    if (!doc.view.webContents.isDestroyed()) doc.view.webContents.removeListener('before-input-event', this.onInput);
     if (!this.win.isDestroyed()) this.win.contentView.removeChildView(doc.view);
     doc.dispose();
   }
@@ -294,6 +303,32 @@ class Workspace {
     if (paneId) this.applyAndFocus(wm.focusPane(this.model, paneId));
   }
 
+  // View → Split Right / Split Down: the active document moves into a new
+  // pane on that side of its pane. Nothing happens when it is not allowed.
+  splitActive(edge) {
+    const docId = wm.activeDocId(this.model);
+    const paneId = docId === null ? null : wm.paneOf(this.model, docId);
+    if (paneId === null) return;
+    this.splitTab(docId, paneId, edge);
+  }
+
+  // docId into a new pane at the edge of paneId, if canSplit.
+  splitTab(docId, paneId, edge) {
+    if (!wm.canSplit(this.model, docId, paneId)) return;
+    this.applyAndFocus(wm.splitPane(this.model, docId, paneId, edge));
+  }
+
+  // Cmd+\ (Ctrl+\ elsewhere) is Split Right. The menu accelerator did not
+  // fire on a Swiss German layout, so every web contents of the window
+  // reports key presses here; preventDefault also stops the accelerator, so
+  // the split never runs twice.
+  handleInput(event, input) {
+    const modifier = process.platform === 'darwin' ? input.meta : input.control;
+    if (input.type !== 'keyDown' || input.code !== 'Backslash' || !modifier || input.alt || input.shift) return;
+    event.preventDefault();
+    this.splitActive('right');
+  }
+
   setList(changes) {
     this.apply(wm.setList(this.model, changes));
   }
@@ -327,6 +362,9 @@ class Workspace {
   // that goes wrong is shown as an error sheet. Never rejects.
   async handleIntent(intent) {
     const doc = intent.docId === undefined ? null : this.documentById(intent.docId);
+    // The host UI stays on top only while a drag runs. Any other intent means
+    // it has ended or never will (a divider drag's own resize-split excepted).
+    if (intent.type !== 'drag' && intent.type !== 'resize-split') this.hostUi.lower();
     try {
       switch (intent.type) {
         case 'select':
@@ -354,8 +392,18 @@ class Workspace {
           this.notice = null;
           this.apply(this.model);
           break;
+        case 'move-tab':
+          if (doc) this.applyAndFocus(wm.moveTab(this.model, intent.docId, intent.paneId, intent.index));
+          break;
+        case 'split':
+          if (doc) this.splitTab(intent.docId, intent.paneId, intent.edge);
+          break;
+        case 'drag':
+          if (intent.active) this.hostUi.raise();
+          else this.hostUi.lower();
+          break;
         default:
-          // move-tab, split, drag: Task 11
+          break;
       }
     } catch (err) {
       await this.showError({ action: INTENT_ACTIONS[intent.type] || 'do that with', filePath: doc?.filePath, err });

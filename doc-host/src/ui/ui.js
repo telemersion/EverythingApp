@@ -16,9 +16,15 @@
     'kit-update': { glyph: '↑', title: 'Kit update available' },
   };
   const SHOWN_BANNERS = 3;
+  const DRAG_THRESHOLD = 4;     // px the pointer moves with the button down before a tab drag starts
+  const EDGE_ZONE = 0.25;       // the outer quarter of a pane's document area splits
 
   let state = null;
   const dividers = new Map();   // `${splitId}:${index}` → element, kept while a drag holds it
+  const strips = new Map();     // paneId → tab strip element, kept across states
+  const tabs = new Map();       // docId → tab element, kept across states: a drag holds pointer capture on one
+  let drag = null;              // the running tab drag, see startTabDrag
+  let swallowClick = false;     // the click that ends a drag selects nothing
   const fadeStarts = new Map(); // `${docId}:${kind}` → { key, start }: the period (fadeKey) and when it first showed
 
   const send = (intent) => window.evUi.send(intent);
@@ -44,6 +50,18 @@
     node.style.width = `${rect.width}px`;
     node.style.height = `${rect.height}px`;
   }
+
+  // Makes container's children exactly nodes, in order, without touching a
+  // node that is in place (moving a node would end a pointer capture on it).
+  function reconcile(container, nodes) {
+    const keep = new Set(nodes);
+    for (const child of [...container.children]) if (!keep.has(child)) child.remove();
+    nodes.forEach((node, i) => {
+      if (container.children[i] !== node) container.insertBefore(node, container.children[i] || null);
+    });
+  }
+
+  const inside = (rect, x, y) => x >= rect.x && x < rect.x + rect.width && y >= rect.y && y < rect.y + rect.height;
 
   function badgeIcon(kind) {
     const badge = BADGES[kind] || { glyph: '', title: kind };
@@ -72,18 +90,24 @@
 
   // Follows a pointer drag that started on node (pointer capture) and
   // reports the pointer position once per animation frame until it ends.
-  function followDrag(node, event, onMove) {
+  // raises: the host UI goes above the documents while it runs (drag intents).
+  function followDrag(node, event, onMove, raises = false) {
     event.preventDefault();
     node.setPointerCapture(event.pointerId);
     node.classList.add('dragging');
+    if (raises) send({ type: 'drag', active: true });
     const report = perFrame(onMove);
     const move = (e) => report(e.clientX, e.clientY);
     const end = () => {
       node.classList.remove('dragging');
-      node.removeEventListener('pointermove', move);
-      node.removeEventListener('lostpointercapture', end);
+      for (const [name, handler] of [['pointermove', move], ['pointerup', end], ['pointercancel', end], ['lostpointercapture', end]]) {
+        node.removeEventListener(name, handler);
+      }
+      if (raises) send({ type: 'drag', active: false });
     };
     node.addEventListener('pointermove', move);
+    node.addEventListener('pointerup', end);
+    node.addEventListener('pointercancel', end);
     node.addEventListener('lostpointercapture', end);
   }
 
@@ -140,17 +164,44 @@
 
   // ---------- Tab strips ----------
 
-  function tabElement(pane, tab) {
-    const selected = tab.docId === pane.selected;
-    const node = element('div', 'tab');
+  // A tab is created once per document and updated in place: a drag holds
+  // pointer capture on it, and a state arriving mid-drag must not replace it.
+  function tabElement(tab) {
+    let node = tabs.get(tab.docId);
+    if (node) return node;
+    node = element('div', 'tab');
     node.dataset.docId = tab.docId;
-    node.title = tab.path;
     node.setAttribute('role', 'tab');
+    node.addEventListener('click', () => {
+      if (swallowClick) swallowClick = false;
+      else send({ type: 'select', docId: tab.docId });
+    });
+    // Middle-click closes (and must not start autoscroll).
+    node.addEventListener('mousedown', (event) => {
+      if (event.button === 1) event.preventDefault();
+    });
+    node.addEventListener('auxclick', (event) => {
+      if (event.button === 1) send({ type: 'close', docId: tab.docId });
+    });
+    node.addEventListener('pointerdown', (event) => startTabDrag(node, event));
+    node.addEventListener('pointermove', (event) => moveTabDrag(node, event));
+    node.addEventListener('pointerup', (event) => endTabDrag(node, event, true));
+    node.addEventListener('pointercancel', (event) => endTabDrag(node, event, false));
+    node.addEventListener('lostpointercapture', (event) => endTabDrag(node, event, false));
+    tabs.set(tab.docId, node);
+    return node;
+  }
+
+  function updateTab(pane, tab) {
+    const node = tabElement(tab);
+    const selected = tab.docId === pane.selected;
+    node.title = tab.path;
     node.setAttribute('aria-selected', String(selected));
     node.classList.toggle('selected', selected);
     node.classList.toggle('dirty', tab.dirty);
-    if (tab.badge) node.append(badgeIcon(tab.badge));
-    node.append(element('span', 'label', tab.label));
+    const children = [];
+    if (tab.badge) children.push(badgeIcon(tab.badge));
+    children.push(element('span', 'label', tab.label));
     // Unsaved: the dot shows in place of the × until the pointer is over the tab (ui.css).
     const close = button('close', undefined, (event) => {
       event.stopPropagation();
@@ -159,27 +210,141 @@
     close.title = 'Close';
     close.setAttribute('aria-label', 'Close');
     close.append(element('span', 'dot', '•'), element('span', 'x', '×'));
-    node.append(close);
-    node.addEventListener('click', () => send({ type: 'select', docId: tab.docId }));
-    // Middle-click closes (and must not start autoscroll).
-    node.addEventListener('mousedown', (event) => {
-      if (event.button === 1) event.preventDefault();
-    });
-    node.addEventListener('auxclick', (event) => {
-      if (event.button === 1) send({ type: 'close', docId: tab.docId });
-    });
+    children.push(close);
+    node.replaceChildren(...children);
     return node;
   }
 
   function tabStrip(pane, rect) {
-    const strip = element('div', 'strip');
-    strip.dataset.paneId = pane.paneId;
-    strip.setAttribute('role', 'tablist');
+    let strip = strips.get(pane.paneId);
+    if (!strip) {
+      strip = element('div', 'strip');
+      strip.dataset.paneId = pane.paneId;
+      strip.setAttribute('role', 'tablist');
+      strips.set(pane.paneId, strip);
+    }
     strip.classList.toggle('focused', pane.focused);
     place(strip, rect);
-    for (const tab of pane.tabs) strip.append(tabElement(pane, tab));
+    reconcile(strip, pane.tabs.map((tab) => updateTab(pane, tab)));
     return strip;
   }
+
+  // ---------- Dragging a tab ----------
+
+  function paneOfDoc(docId) {
+    return state.panes.find((pane) => pane.tabs.some((tab) => tab.docId === docId)) || null;
+  }
+
+  function startTabDrag(node, event) {
+    if (event.button !== 0 || !state || event.target.closest('.close')) return;
+    const docId = node.dataset.docId;
+    if (drag) finishTabDrag(false);
+    swallowClick = false;
+    if (!paneOfDoc(docId)) return;
+    node.setPointerCapture(event.pointerId);
+    drag = { node, docId, pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, active: false, target: null };
+  }
+
+  function moveTabDrag(node, event) {
+    if (!drag || drag.node !== node || event.pointerId !== drag.pointerId) return;
+    if (!drag.active) {
+      if (Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY) < DRAG_THRESHOLD) return;
+      drag.active = true;
+      node.classList.add('dragging');
+      byId('drag-ghost').textContent = node.querySelector('.label').textContent;
+      byId('drag-ghost').hidden = false;
+      send({ type: 'drag', active: true });
+    }
+    drag.target = dropTarget(event.clientX, event.clientY);
+    drawDrag(event.clientX, event.clientY);
+  }
+
+  // Where a release at (x, y) would drop: { intent, marker: rect } or null.
+  function dropTarget(x, y) {
+    const { docId } = drag;
+    for (const rects of state.layout.panes) {
+      const pane = state.panes.find((p) => p.paneId === rects.paneId);
+      if (!pane) continue;
+      if (inside(rects.tabStrip, x, y)) return stripTarget(pane, rects.tabStrip, x);
+      if (inside(rects.document, x, y)) return documentTarget(pane, rects.document, x, y);
+    }
+    return null;
+  }
+
+  // In a tab strip: between the tabs (the dragged one not counted), at the pointer.
+  function stripTarget(pane, rect, x) {
+    const others = pane.tabs.filter((tab) => tab.docId !== drag.docId).map((tab) => tabs.get(tab.docId)).filter(Boolean)
+      .map((node) => node.getBoundingClientRect());
+    const index = others.filter((box) => box.left + box.width / 2 < x).length;
+    let at = rect.x;
+    if (index > 0) at = others[index - 1].right;
+    else if (others.length > 0) at = others[0].left;
+    at = Math.min(Math.max(at, rect.x), rect.x + rect.width);
+    return {
+      intent: { type: 'move-tab', docId: drag.docId, paneId: pane.paneId, index },
+      marker: { x: Math.max(rect.x, at - 1), y: rect.y, width: 2, height: rect.height },
+    };
+  }
+
+  // In a pane's document area: the outer quarter on a side splits that way
+  // (the half it would take is highlighted), the centre moves the tab to the
+  // end of the pane. A pane's only tab cannot split or move onto itself.
+  function documentTarget(pane, rect, x, y) {
+    if (pane.tabs.length === 1 && pane.tabs[0].docId === drag.docId) return null;
+    const fractions = {
+      left: (x - rect.x) / rect.width,
+      right: (rect.x + rect.width - x) / rect.width,
+      top: (y - rect.y) / rect.height,
+      bottom: (rect.y + rect.height - y) / rect.height,
+    };
+    const [edge, nearest] = Object.entries(fractions).sort((a, b) => a[1] - b[1])[0];
+    if (nearest >= EDGE_ZONE) {
+      return { intent: { type: 'move-tab', docId: drag.docId, paneId: pane.paneId, index: pane.tabs.length }, marker: { ...rect } };
+    }
+    const halfW = Math.floor(rect.width / 2);
+    const halfH = Math.floor(rect.height / 2);
+    const marker = {
+      left: { x: rect.x, y: rect.y, width: halfW, height: rect.height },
+      right: { x: rect.x + rect.width - halfW, y: rect.y, width: halfW, height: rect.height },
+      top: { x: rect.x, y: rect.y, width: rect.width, height: halfH },
+      bottom: { x: rect.x, y: rect.y + rect.height - halfH, width: rect.width, height: halfH },
+    }[edge];
+    return { intent: { type: 'split', docId: drag.docId, paneId: pane.paneId, edge }, marker };
+  }
+
+  function drawDrag(x, y) {
+    const marker = byId('drop-marker');
+    marker.hidden = !drag || !drag.target;
+    if (!marker.hidden) place(marker, drag.target.marker);
+    const ghost = byId('drag-ghost');
+    ghost.style.left = `${x + 12}px`;
+    ghost.style.top = `${y + 12}px`;
+  }
+
+  // Ends the drag: a release over a target drops, everything else cancels.
+  // Every end of a started drag sends drag { active: false }, after the drop.
+  function finishTabDrag(commit) {
+    const ended = drag;
+    drag = null;
+    if (!ended) return;
+    ended.node.classList.remove('dragging');
+    byId('drop-marker').hidden = true;
+    byId('drag-ghost').hidden = true;
+    if (!ended.active) return;
+    swallowClick = true;
+    if (commit && ended.target) send(ended.target.intent);
+    send({ type: 'drag', active: false });
+  }
+
+  function endTabDrag(node, event, released) {
+    if (!drag || drag.node !== node || event.pointerId !== drag.pointerId) return;
+    if (released && drag.active) drag.target = dropTarget(event.clientX, event.clientY); // where the pointer is now
+    finishTabDrag(released);
+  }
+
+  window.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && drag) finishTabDrag(false);
+  });
 
   // ---------- Banner rows ----------
 
@@ -247,8 +412,14 @@
         nodes.push(bannerRow(pane, doc.banners, rects.banners, shownFades));
       }
     }
-    byId('panes').replaceChildren(...nodes);
+    reconcile(byId('panes'), nodes);
     for (const key of [...fadeStarts.keys()]) if (!shownFades.has(key)) fadeStarts.delete(key);
+    // Forget the strips and tabs that are gone.
+    const livePanes = new Set(state.panes.map((pane) => pane.paneId));
+    for (const id of [...strips.keys()]) if (!livePanes.has(id)) strips.delete(id);
+    const liveDocs = new Set(state.panes.flatMap((pane) => pane.tabs.map((tab) => tab.docId)));
+    for (const id of [...tabs.keys()]) if (!liveDocs.has(id)) tabs.delete(id);
+    if (drag && !liveDocs.has(drag.docId)) finishTabDrag(false);
   }
 
   // ---------- Dividers ----------
@@ -271,7 +442,7 @@
       next[index] = first;
       next[index + 1] = pair - first;
       send({ type: 'resize-split', splitId, sizes: next });
-    });
+    }, true);
   }
 
   // Divider elements are kept across states: a drag holds pointer capture on one.
@@ -316,6 +487,7 @@
 
   function render() {
     document.documentElement.dataset.platform = state.platform;
+    document.documentElement.classList.toggle('dragging', state.dragging === true);
     renderList();
     renderPanes();
     renderDividers();
