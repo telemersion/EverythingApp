@@ -37,7 +37,9 @@ function buildMenu({ workspace, isDev }) {
         { id: 'close', label: 'Close', accelerator: 'CmdOrCtrl+W', click: withDoc('close', (doc) => workspace.closeDocument(doc.id)) },
         { label: 'Close Window', accelerator: 'CmdOrCtrl+Shift+W', click: () => workspace.win.close() },
         { type: 'separator' },
-        // Update Kit… (update-kit) and Undo Kit Update (undo-kit) come in Task 13.
+        { id: 'update-kit', label: 'Update Kit…', click: withDoc('update the kit of', (doc) => doc.updateKit()) },
+        { id: 'undo-kit', label: 'Undo Kit Update', click: withDoc('undo the kit update of', (doc) => doc.undoKitUpdate()) },
+        { type: 'separator' },
         { id: 'reveal', label: isMac ? 'Reveal in Finder' : 'Show in folder', click: withDoc('show', (doc) => shell.showItemInFolder(doc.filePath)) },
         ...(isMac ? [] : [{ type: 'separator' }, { role: 'quit' }]),
       ],
@@ -106,6 +108,9 @@ function updateMenu(menu, workspace) {
   const item = (id) => menu.getMenuItemById(id);
   const hasDocument = workspace.activeDocument() !== null;
   for (const id of DOCUMENT_ITEMS) if (item(id)) item(id).enabled = hasDocument;
+  const active = workspace.activeDocument();
+  item('update-kit').enabled = !!(active && active.status.kitUpdate);
+  item('undo-kit').enabled = !!(active && active.status.kitUpdated);
   const docId = wm.activeDocId(workspace.model);
   const paneId = docId === null ? null : wm.paneOf(workspace.model, docId);
   const canSplit = paneId !== null && wm.canSplit(workspace.model, docId, paneId);

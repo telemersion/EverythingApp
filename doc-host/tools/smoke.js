@@ -21,6 +21,9 @@ const { buildMenu } = require('../src/menu');
 const { docsInOrder, activeDocId, panesInOrder, paneOf, splitPane } = require('../src/workspace-model');
 const { checkDocument } = require('../src/conformance');
 const { parseDocument, buildDocument } = require('../src/frame');
+const { pathKey } = require('../src/write');
+const { findKit } = require('../kit');
+const { describeStatus } = require('../src/status');
 
 registerSchemePrivileges();
 // Keep running if a step closes a window, so its assertion can report it.
@@ -907,6 +910,103 @@ async function run(dir) {
   })()`);
   assert.deepEqual(emptyRect, workspace.layout.panes[0].document, "in the single pane's document area");
   assert.equal(workspace.win.getTitle(), 'EverythingApp');
+
+  step('an outdated kit shows its badge and banner');
+  const kitDir = path.join(dir, 'kit');
+  await fs.mkdir(kitDir);
+  const notePath = path.join(kitDir, 'note.ev.html');
+  await fs.copyFile(fixture('outdated-kit'), notePath);
+  const noteOriginal = await fs.readFile(notePath, 'utf8');
+  const note = await openDoc(notePath);
+  const noteJs = (code) => note.view.webContents.executeJavaScript(code);
+  const described = () => describeStatus(note.status, { name: note.name, filePath: notePath });
+  assert.deepEqual(note.status.kitUpdate, { from: '1.0.0', to: '1.1.0' });
+  assert.equal(described().badge, 'kit-update');
+  assert.deepEqual(described().banners.map((b) => [b.kind, b.message]),
+    [['kit-update', 'This document uses kit 1.0.0; 1.1.0 is available.']]);
+  assert.equal(menu.getMenuItemById('update-kit').enabled, true);
+  assert.equal(menu.getMenuItemById('undo-kit').enabled, false);
+  await note.onBannerAction('kit-update', 'dismiss');
+  assert.deepEqual(described().banners, [], 'Not now hides the banner');
+  assert.equal(described().badge, 'kit-update', 'the badge stays');
+  assert.equal(menu.getMenuItemById('update-kit').enabled, true, 'so does the menu item');
+
+  step('Update kit with unsaved changes writes kit and data in one write');
+  await noteJs(`(() => { const t = document.getElementById('text'); t.value = 'Remember the milk';
+    t.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+  await until('the note is dirty', () => note.isDirty);
+  const beforeKit = parseDocument(noteOriginal).parts;
+  const noteStore = path.join(storeDir, pathKey(notePath));
+  const versionNames = async () => (await exists(noteStore) ? await fs.readdir(noteStore) : []).filter((n) => n.endsWith('.html'));
+  assert.deepEqual(await versionNames(), []);
+  const generationBefore = note.generation;
+  answer(0); // Update kit
+  await note.onBannerAction('kit-update', 'update-kit');
+  assert.deepEqual(sheets.map((o) => [o.message, o.detail, o.buttons, o.defaultId, o.cancelId]), [[
+    'Update the kit of note.ev.html from 1.0.0 to 1.1.0?',
+    'Only the kit is replaced. The previous file is kept in the version store. Your unsaved changes are saved with it.',
+    ['Update kit', 'Cancel'], 0, 1,
+  ]]);
+  let afterKit = parseDocument(await fs.readFile(notePath, 'utf8')).parts;
+  assert.equal(afterKit.kitVersion, '1.1.0');
+  assert.equal(afterKit.kit, findKit('1.1.0').text);
+  assert.equal(JSON.parse(afterKit.data).text, 'Remember the milk');
+  assert.equal(afterKit.style, beforeKit.style);
+  assert.equal(afterKit.script, beforeKit.script);
+  assert.deepEqual({ ...afterKit, kit: '', kitVersion: '', data: '' }, { ...beforeKit, kit: '', kitVersion: '', data: '' });
+  const stored = await versionNames();
+  assert.equal(stored.length, 1, 'exactly one new version');
+  assert.equal(await fs.readFile(path.join(noteStore, stored[0]), 'utf8'), noteOriginal, 'the previous file');
+  assert.equal(note.isDirty, false);
+  assert.ok(note.generation > generationBefore, 'the page reloaded');
+  await until('the note reloaded', () => !note.view.webContents.isLoading());
+  await until('the note shows its data', async () => (await noteJs('document.getElementById("text").value')) === 'Remember the milk');
+  assert.equal(note.status.kitUpdate, null);
+  assert.deepEqual(note.status.kitUpdated, { from: '1.0.0', to: '1.1.0' });
+  assert.deepEqual(described().banners.map((b) => [b.kind, b.message]), [['kit-updated', 'Kit updated to 1.1.0.']]);
+  assert.equal(menu.getMenuItemById('update-kit').enabled, false);
+  assert.equal(menu.getMenuItemById('undo-kit').enabled, true);
+
+  step('Undo brings kit 1.0.0 back');
+  answer();
+  await note.onBannerAction('kit-updated', 'undo-kit');
+  assert.deepEqual(sheets, [], 'no confirmation');
+  afterKit = parseDocument(await fs.readFile(notePath, 'utf8')).parts;
+  assert.equal(afterKit.kitVersion, '1.0.0');
+  assert.equal(afterKit.kit, findKit('1.0.0').text);
+  assert.equal(JSON.parse(afterKit.data).text, 'Remember the milk');
+  assert.equal(note.status.kitUpdated, null);
+  assert.deepEqual(note.status.kitUpdate, { from: '1.0.0', to: '1.1.0' });
+  assert.equal(described().badge, 'kit-update');
+  assert.equal(menu.getMenuItemById('undo-kit').enabled, false);
+  assert.equal(menu.getMenuItemById('update-kit').enabled, true);
+  await until('the note reloaded', () => !note.view.webContents.isLoading());
+
+  step('a kit update that hits a data conflict asks first');
+  await noteJs(`(() => { const t = document.getElementById('text'); t.value = 'Mine';
+    t.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+  await until('the note is dirty again', () => note.isDirty);
+  const onDisk = parseDocument(await fs.readFile(notePath, 'utf8')).parts;
+  await fs.writeFile(notePath, buildDocument({ ...onDisk, data: JSON.stringify({ text: 'Theirs' }) }));
+  await until('the data conflict is seen', () => note.status.dataConflict);
+  const conflictFile = await fs.readFile(notePath, 'utf8');
+  const versionsBefore = await versionNames();
+  answer(0, 2); // Update kit, then Cancel at the conflict sheet
+  await note.updateKit();
+  assert.deepEqual(sheets.map((o) => o.message), [
+    'Update the kit of note.ev.html from 1.0.0 to 1.1.0?',
+    'The data in note.ev.html was changed on disk since you opened it.',
+  ]);
+  assert.equal(await fs.readFile(notePath, 'utf8'), conflictFile, 'nothing written');
+  assert.deepEqual(await versionNames(), versionsBefore);
+  assert.equal(note.isDirty, true);
+  answer(1, 1); // Cancel the kit sheet: nothing happens at all
+  await note.updateKit();
+  assert.equal(sheets.length, 1);
+  assert.equal(await fs.readFile(notePath, 'utf8'), conflictFile);
+  answer(1);
+  await workspace.closeDocument(note.id);
+  assert.equal(note.disposed, true);
 
   step('all checks passed');
 }

@@ -13,6 +13,7 @@ const { SCHEME, originFor } = require('./urls');
 const { showErrorSheet, formatErrorReport } = require('./errors');
 const { emptyStatus, describeStatus } = require('./status');
 const { LoadTags } = require('./load-tags');
+const { findKit, newestKit, outdatedKit } = require('../kit');
 
 const SAVE_TIMEOUT_MS = 5000;
 const UPDATED_FROM_DISK_MS = 4000;
@@ -36,6 +37,7 @@ class Document {
     this.storeDir = storeDir;
     this.ui = ui;
     this.status = emptyStatus();
+    this.status.kitUpdate = outdatedKit(parts);
 
     this.html = html;                       // what the protocol handler serves
     this.known = sectionHashes(parts);      // what we believe is on disk
@@ -209,7 +211,21 @@ class Document {
     while (this.saving || this.nextSave) await (this.nextSave || this.saving).catch(() => {});
   }
 
-  async doSave({ keepMine = false } = {}) {
+  // Runs fn as the save turn: after every running or queued save, and
+  // before any later one. Resolves with fn's result.
+  async inSaveTurn(fn) {
+    while (this.saving || this.nextSave) await this.settle();
+    const run = fn().finally(() => {
+      if (this.saving === run) this.saving = null;
+    });
+    this.saving = run;
+    return run;
+  }
+
+  // kit (a published kit) makes this a kit write: the kit replaces the
+  // document's kit together with the data, if there is unsaved data; else
+  // the data on disk stays. kitFailure is the message of its error sheet.
+  async doSave({ keepMine = false, kit = null, kitFailure = null } = {}) {
     // A reload while this save runs replaces the page and its counters;
     // then this save's results no longer apply to them.
     const generation = this.generation;
@@ -230,17 +246,21 @@ class Document {
           cancelId: 2,
         });
         if (choice === null || choice === 2) return false;
-        if (choice === 1) return this.loadFromDisk();
+        if (choice === 1) return (await this.loadFromDisk()) && !kit;
       }
       let snapshot;
       let written;
       try {
-        snapshot = await this.requestSnapshot();
-        const problem = validateSnapshot(snapshot.json);
-        if (problem) throw new Error(problem);
+        // A kit write of a clean document keeps the data on disk as it is.
+        if (kit && !this.isDirty) snapshot = { json: null, changes: 0 };
+        else {
+          snapshot = await this.requestSnapshot();
+          const problem = validateSnapshot(snapshot.json);
+          if (problem) throw new Error(problem);
+        }
         // Refused if the data on disk is not the data we last saw (known).
         written = await writeDocument(this.filePath, snapshot.json,
-          { storeDir: this.storeDir, expectedDataHash: this.known.data });
+          { storeDir: this.storeDir, expectedDataHash: this.known.data, ...(kit ? { kit } : {}) });
         this.writes++;
       } catch (err) {
         if (generation !== this.generation) return false;
@@ -257,7 +277,7 @@ class Document {
         }
         await this.ui.sheet({
           type: 'error',
-          message: `${this.name} could not be saved. The file on disk was not changed.`,
+          message: kitFailure || `${this.name} could not be saved. The file on disk was not changed.`,
           detail: err.message,
           buttons: ['OK'],
         });
@@ -274,7 +294,13 @@ class Document {
       this.acceptOnDisk(written);
       this.savedChange = Math.max(this.savedChange, snapshot.changes);
       // The write read the file and found it conforming.
-      this.setStatus({ dataConflict: false, missing: false, nonConforming: null, checkError: null });
+      this.setStatus({
+        dataConflict: false,
+        missing: false,
+        nonConforming: null,
+        checkError: null,
+        ...(kit ? { kitUpdate: this.sameKit(this.status.kitUpdate, outdatedKit(checkDocument(written).parts)) } : {}),
+      });
       // Saving spliced our data into newer outside data from disk: show it.
       // The save itself succeeded, whatever happens to this reload.
       if (this.known.outsideData !== this.running && !this.isDirty) {
@@ -282,6 +308,54 @@ class Document {
       }
       return true;
     }
+  }
+
+  // Keeps the old object when nothing changed, so status stays unchanged.
+  sameKit(old, next) {
+    return old && next && old.from === next.from && old.to === next.to ? old : next;
+  }
+
+  // ---------- Kit ----------
+
+  // File → Update Kit… and the banner: asks once, then replaces the kit (and
+  // the unsaved data, if any) in one write and reloads. False if nothing
+  // changed.
+  async updateKit() {
+    const { kitUpdate } = this.status;
+    if (!kitUpdate || this.disposed) return false;
+    const newest = newestKit(Number(checkDocument(this.html).parts.api));
+    if (!newest) return false;
+    const choice = await this.ui.sheet({
+      type: 'question',
+      message: `Update the kit of ${this.name} from ${kitUpdate.from} to ${kitUpdate.to}?`,
+      detail: 'Only the kit is replaced. The previous file is kept in the version store.' +
+        (this.isDirty ? ' Your unsaved changes are saved with it.' : ''),
+      buttons: ['Update kit', 'Cancel'],
+      defaultId: 0,
+      cancelId: 1,
+    });
+    if (choice !== 0) return false;
+    const ok = await this.inSaveTurn(() => this.doSave({
+      kit: newest,
+      kitFailure: `The kit of ${this.name} could not be updated. The file on disk was not changed.`,
+    }));
+    if (!ok) return false;
+    this.setStatus({ kitUpdated: { from: kitUpdate.from, to: kitUpdate.to } });
+    return true;
+  }
+
+  // The banner's Undo, until the document is closed: no question.
+  async undoKitUpdate() {
+    const { kitUpdated } = this.status;
+    const previous = kitUpdated && findKit(kitUpdated.from);
+    if (!previous || this.disposed) return false;
+    const ok = await this.inSaveTurn(() => this.doSave({
+      kit: previous,
+      kitFailure: `The kit of ${this.name} could not be restored. The file on disk was not changed.`,
+    }));
+    if (!ok) return false;
+    this.setStatus({ kitUpdated: null });
+    return true;
   }
 
   // Re-reads what is on disk into known/knownFileHash. False if the file
@@ -333,6 +407,7 @@ class Document {
       missing: false,
       checkError: null,
       nonConforming: check.ok ? null : formatReport(this.filePath, check.errors, { context: 'open-document' }),
+      ...(check.ok ? { kitUpdate: this.sameKit(this.status.kitUpdate, outdatedKit(check.parts)) } : {}),
     });
     if (!check.ok) return false;
     // An edit that landed while the file was read keeps the page.
@@ -511,8 +586,13 @@ class Document {
       case 'save-reload':
         await this.save(); // reloads newer outside data once clean
         return;
+      case 'update-kit':
+        await this.updateKit();
+        return;
+      case 'undo-kit':
+        await this.undoKitUpdate();
+        return;
       default:
-        // update-kit, undo-kit: Task 13
     }
   }
 
