@@ -259,7 +259,7 @@ function setList(model, { visible, mode, width } = {}) {
   const list = { ...model.list };
   if (typeof visible === 'boolean') list.visible = visible;
   if (mode === 'list' || mode === 'thumbnails') list.mode = mode;
-  if (typeof width === 'number' && Number.isFinite(width)) list.width = Math.max(LIST_MIN, Math.min(LIST_MAX, width));
+  if (typeof width === 'number' && Number.isFinite(width)) list.width = Math.round(Math.max(LIST_MIN, Math.min(LIST_MAX, width)));
   return { ...model, list };
 }
 

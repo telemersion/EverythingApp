@@ -279,6 +279,7 @@ test('setList clamps the width to 160-480 and keeps the other fields', () => {
   const m = setList(createModel(), { mode: 'thumbnails' });
   assert.equal(setList(m, { width: 1000 }).list.width, 480);
   assert.equal(setList(m, { width: 10 }).list.width, 160);
+  assert.equal(setList(m, { width: 171.08203125 }).list.width, 171, 'a whole number of pixels');
   assert.deepEqual(setList(m, { width: 300 }).list, { visible: true, mode: 'thumbnails', width: 300 });
   assert.deepEqual(setList(m, { visible: false }).list, { visible: false, mode: 'thumbnails', width: 240 });
   assert.deepEqual(setList(m, { mode: 'list' }).list, { visible: true, mode: 'list', width: 240 });

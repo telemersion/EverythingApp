@@ -65,7 +65,7 @@ const INTENT_ACTIONS = {
 // free; it gets the state after every apply() and reports intents
 // (handleIntent).
 class Workspace {
-  constructor({ storeDir, workspaceFile, allowDevTools = false }) {
+  constructor({ storeDir, workspaceFile, allowDevTools = false, recordThumbnails = false }) {
     this.storeDir = storeDir;
     this.workspaceFile = workspaceFile;
     this.allowDevTools = allowDevTools;
@@ -77,12 +77,14 @@ class Workspace {
     this.docTypes = new WeakMap(); // Document → { html, docType } of its running page
     this.prompting = false;      // a sheet is open
     this.restoring = false;
+    this.pendingOpens = [];      // open() calls that arrived during restore()
     this.quitting = null;        // the running quit()
     this.quitConfirmed = false;
     // Thumbnails: the newest data URL per document (memory only), when to
     // capture (thumbnail-triggers.js), and every capture asked for (the smoke
     // test reads thumbnailCaptures).
     this.thumbnails = new Map();
+    this.recordThumbnails = recordThumbnails; // only the smoke test asks for the log
     this.thumbnailCaptures = [];
     this.captureSeq = new Map();  // docId → the newest capture asked for
     this.shown = new Set();       // ids of the documents whose view is visible
@@ -145,6 +147,11 @@ class Workspace {
   // selects its tab if it is open already. Anything that is not a conforming
   // document gets a sheet. Never rejects.
   async open(rawPath, { paneId } = {}) {
+    // restore() has not finished: its model replaces any tab added now.
+    if (this.restoring) {
+      this.pendingOpens.push({ rawPath, paneId });
+      return null;
+    }
     try {
       const result = await readDocumentFile(rawPath);
       const existing = result.kind === 'error' ? null : this.registry.byPath(result.filePath);
@@ -342,7 +349,7 @@ class Workspace {
   // pixels, keeps the newest result per document and sends it to the host UI.
   // A failed capture keeps the thumbnail it had. Never rejects.
   async captureThumbnail(docId, reason) {
-    this.thumbnailCaptures.push([docId, reason]);
+    if (this.recordThumbnails) this.thumbnailCaptures.push([docId, reason]);
     const doc = this.documentById(docId);
     if (!doc || this.win.isDestroyed()) return;
     const seq = (this.captureSeq.get(docId) || 0) + 1;
@@ -570,6 +577,10 @@ class Workspace {
           return false;
         }
       }
+      // Documents could be edited while the saves ran: whatever is dirty now
+      // gets its own summary before anything closes.
+      await Promise.all(this.openDocuments().map((doc) => doc.settle()));
+      if (this.openDocuments().some((doc) => doc.isDirty)) return this.confirmCloseAll();
       return true;
     }
     if (choice === 1) {
@@ -651,6 +662,7 @@ class Workspace {
       if (!this.win.isDestroyed()) this.win.show();
     }
     this.applyAndFocus(this.model);
+    for (const { rawPath, paneId } of this.pendingOpens.splice(0)) await this.open(rawPath, { paneId });
     return { failed };
   }
 

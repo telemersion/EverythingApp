@@ -11,7 +11,6 @@ const VERSION = 1;
 const MAX_DEPTH = 32;
 const MIN_WINDOW = 200;
 const MIN_OVERLAP = 100;
-const DEFAULT_SIZE = { width: 1280, height: 860 };
 
 const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 const isFiniteNumber = (v) => typeof v === 'number' && Number.isFinite(v);

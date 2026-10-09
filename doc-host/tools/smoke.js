@@ -57,7 +57,7 @@ async function run(dir) {
   await fs.copyFile(fixture('hours-sheet'), filePath);
   const original = await fs.readFile(filePath, 'utf8');
 
-  const workspace = new Workspace({ storeDir, workspaceFile });
+  const workspace = new Workspace({ storeDir, workspaceFile, recordThumbnails: true });
   const menu = buildMenu({ workspace, isDev: false });
   workspace.menu = menu;
   registerIpc({ workspace });
@@ -506,6 +506,36 @@ async function run(dir) {
   assert.equal(closeSummaryDetail(twelve),
     [...twelve.slice(0, 10), 'and 2 more', '', "Your changes will be lost if you don't save them."].join('\n'));
 
+  step('an edit during Save all gets its own summary before the window closes');
+  // doc and todo3 are dirty, other3 is clean; while the first save is in
+  // flight, other3 becomes dirty. confirmCloseAll is what quit() waits for
+  // before it persists and exits (runQuit), so it must not return true yet.
+  await other3.save();
+  await addRowTo(doc, 'hours dirty');
+  await addTodo(todo3, 'Save all, third edit');
+  assert.deepEqual([doc.isDirty, todo3.isDirty, other3.isDirty], [true, true, false]);
+  const firstDirty = workspace.openDocuments().find((d) => d.isDirty);
+  const snapshotOf = firstDirty.requestSnapshot;
+  let editedThird = null;
+  firstDirty.requestSnapshot = async function () {
+    const snapshot = await snapshotOf.call(this);
+    editedThird = addRowTo(other3, 'third document dirty');
+    await editedThird;
+    return snapshot;
+  };
+  answer(0, 2); // Save all; then Cancel the prompt of the third document
+  const closed = await workspace.confirmCloseAll();
+  delete firstDirty.requestSnapshot;
+  await editedThird;
+  assert.equal(closed, false, 'cancelled: the window does not close');
+  assert.equal(sheets.length, 2, 'the summary ran again for the newly dirty document');
+  assert.equal(sheets[0].message, 'Do you want to save the changes to 2 documents?');
+  assert.equal(sheets[1].message, 'Do you want to save the changes you made to hours.ev.html?');
+  assert.deepEqual([doc.isDirty, todo3.isDirty, other3.isDirty], [false, false, true], 'the first two saved, the third kept');
+  assert.equal(workspace.registry.documents.size, 3, 'nothing closed');
+  await addRowTo(doc, 'hours dirty');
+  await addTodo(todo3, 'Review each');
+
   step('Review each: Cancel keeps everything open');
   await addRowTo(doc, 'hours dirty');
   await addTodo(todo3, 'Review each');
@@ -548,7 +578,7 @@ async function run(dir) {
     { tabs: [filePath, otherPath], selected: otherPath },
     { tabs: [todoPath], selected: todoPath },
   ]);
-  const second = new Workspace({ storeDir, workspaceFile });
+  const second = new Workspace({ storeDir, workspaceFile, recordThumbnails: true });
   try {
     assert.deepEqual(await second.restore(), { failed: [] });
     assert.deepEqual(layoutOf(second), layoutOf(workspace), 'same panes and tabs');

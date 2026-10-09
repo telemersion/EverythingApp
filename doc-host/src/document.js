@@ -352,6 +352,7 @@ class Document {
     const previous = kitUpdated && findKit(kitUpdated.from);
     if (!previous || this.disposed) return false;
     await this.settle();
+    if (this.disposed || !this.status.kitUpdated) return false;
     if (this.isDirty) {
       const choice = await this.ui.sheet({
         type: 'question',
