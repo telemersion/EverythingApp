@@ -34,7 +34,7 @@ v0.1 is a single-user tool. Team use (documents exchanged between people, shared
 
 Acceptance criteria:
 
-- [ ] Double-clicking a document file (or dropping it on the host) opens it in the host and selects it in the document list. *(M1: drag and drop and command line; double-click with M3, document list with M2)*
+- [ ] Double-clicking a document file (or dropping it on the host) opens it in the host and selects it in the document list. *(M1: drag and drop and command line; M2, 2026-10-09: opens as a tab in the focused pane, selected in the tab strip and the document list; double-click with M3)*
 - [x] The document renders exactly as it does in Chrome. *(M1, 2026-10-06: hours sheet captured at 1100×768 @2x in headless Chrome and the host; identical layout and computed colours, apart from the Save button, status line and save hint, which the document shows only in the browser. The host capture is tagged with the display profile; converted to sRGB it matches Chrome to the pixel except text anti-aliasing.)*
 - [x] Ctrl/Cmd+S and File → Save write the current data into the opened file. No dialog appears. The document shows no Save button of its own while running in the host. *(M1, 2026-10-07: manual check — Cmd+S and File → Save wrote without a dialog, the dirty marker cleared, only the data block changed on disk; no Save button in the host.)*
 - [x] After saving, reopening the file shows the new rows.
@@ -381,4 +381,4 @@ M1 tasks, in order:
 10. Adapt `hours-sheet.html` to the specification (frame, sections, kit, `ev` names, no own Save button under the host) and use it as the first fixture.
 11. Walk through the acceptance criteria in the user story.
 
-M1 passed its acceptance criteria on 2026-10-07. M2 is planned in [docs/plans/m2-workspace.md](docs/plans/m2-workspace.md); M3 is planned once M2 passes.
+M1 passed its acceptance criteria on 2026-10-07. M2 passed its acceptance walk-through on 2026-10-09, results in [docs/plans/m2-workspace.md](docs/plans/m2-workspace.md); M3 is planned once M2 passes.

@@ -1173,6 +1173,7 @@ step('a kit update that hits a data conflict asks first');     // external data 
 - Hidden documents run throttled (timers at most once a second, after 5 minutes once a minute); a document showing a live clock updates late while hidden.
 - `workspace.json` is written when the host quits; after a crash the previous run's layout is restored.
 - Thumbnails need a display surface; without one (screen off, locked, headless) the list shows placeholders.
+- M2 was tested on macOS only; Windows (including opening one file as `HOURS.EV.HTML` and `hours.ev.html`) is not tested.
 - Everything in "Not in M2" in firstSpec.md.
 
 ## Spike results (filled in by Task 1)
@@ -1184,4 +1185,20 @@ step('a kit update that hits a data conflict asks first');     // external data 
 
 ## Acceptance results (filled in by Task 14)
 
-…
+Step 1, automated (2026-10-09, HEAD abc06f1): `npm test` 260 tests, 260 pass, 0 fail; `npm run probe` 23 PASS, 0 FAIL; `npm run smoke` 56 steps, "[smoke] all checks passed". Platform: macOS 26.5.1, Electron 44.5.1.
+
+1. **Open**: passed. By hand: Open… adds tabs (2026-10-07); the command line adds tabs in the focused pane (2026-10-07, 2026-10-09); a `.ev.html` dragged from Finder opens as a tab (2026-10-07); the new tab is selected in the tab strip and the list; Open… on an already open document selects its tab, no second tab (2026-10-09).
+2. **Several documents**: passed, by hand, 2026-10-09. Five open; switching through all of them kept the hours sheet's filter (person = Ben) and scroll position and the to-do list's two unsaved items.
+3. **Splits**: passed, by hand, 2026-10-09. A tab dragged to each of the four edges splits there; drags into another tab strip move with an insertion marker; a drop in a pane's centre appends; an emptied pane disappears; a pane's only tab shows no marker over its own pane; Split Right / Split Down work (and ⌘ + the Backslash key on a Swiss German layout, once); dividers resize live; a drag released outside the window, over the Dock or interrupted by ⌘Tab leaves the documents usable.
+4. **Save**: passed, by hand, 2026-10-07. Cmd+S saves only the active document; `•` on its tab, its list entry and the window title.
+5. **List**: passed, by hand, 2026-10-09. List and thumbnails modes work; thumbnails update about 2 s after an edit and at once on save and tab switch; restored documents not shown since the start show a placeholder (label and document type) until first shown; the View menu marks the current mode (after a fix).
+6. **Background changes**: passed, by hand, 2026-10-09. An outside style change to a hidden clean document reloaded it silently; the same change to a hidden dirty document gave its tab and list entry the "updated on disk" badge and, when selected, the banner "This document was updated on disk. Your data is unsaved." with the data kept; no dialog appeared and the active document was not interrupted. Visible-document case (2026-10-07): "Updated from disk." fades after 4 s; "Save my data and reload" kept the data and took the new style.
+7. **Trust boundary**: passed. `npm run probe` 23 PASS, 0 FAIL (2026-10-09); in every manual check no document drew over the list, tab strips or banners.
+8. **Close summary**: passed. By hand (2026-10-07): Cmd+Q with two dirty documents showed "Do you want to save the changes to 2 documents?" with the names, Save all / Review each… / Cancel; Cancel kept all open; Save all saved both and quit. Smoke steps, not checked by hand: "Save all saves every document; a read-only one stops closing", "Review each: Cancel keeps everything open", "closing waits for a running save".
+9. **Quit**: passed, by hand, 2026-10-07. Cmd+Q continues quitting after the close summary on macOS.
+10. **Restore**: passed, by hand, 2026-10-09. After quit and restart with one file moved away, the row split (left pane hours / to-do / to-do-b with to-do selected, right pane note, note active), list mode and the window size and position (1173×860 at 45,128) came back; one notice at the top of the list named "hours-b.ev.html — moved or deleted"; OK dismissed it. Thumbnails mode restored too (2026-10-09).
+11. **Kit update**: passed, by hand, 2026-10-09. A document on kit 1.0.0 showed the kit badge and the banner "This document uses kit 1.0.0; 1.1.0 is available."; Update kit with unsaved text showed the sheet naming both versions and "Your unsaved changes are saved with it."; one write; the page reloaded without `•`; "Kit updated to 1.1.0." appeared; on disk kit 1.1.0 with the text in the data. Smoke steps, not checked by hand: only kit, `data-kit-version` and data change on disk, style and script unchanged, exactly one stored version equal to the previous file; Undo restores 1.0.0 and stores a version; Undo on a dirty document asks first; a kit update that hits a data conflict asks first and Cancel writes nothing.
+12. **Kit 1.1**: passed, by hand, 2026-10-09. No Save button in the host for any document; in Google Chrome the hours sheet showed its Save button and "Saved", "Unsaved changes" after adding a row, and Save wrote the file (conforming, kit 1.1.0, the new row in its data); after reload the row was still there. A fallback save is byte-identical to a host save: `npm test`.
+13. **Regression**: passed. Every M1 smoke step is still in `npm run smoke` and passes (56 steps in all); `npm run probe` passes; `npm test` 260/260. By hand in M2: open, save, close prompt, external changes and restore behave as in M1 within the workspace (checks above).
+
+Windows (opening one file as `HOURS.EV.HTML` and `hours.ev.html`): not tested, no Windows machine available.
