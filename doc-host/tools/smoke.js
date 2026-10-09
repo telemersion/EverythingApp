@@ -552,6 +552,69 @@ async function run(dir) {
     assert.equal(d.isDirty, true, "Don't save takes effect only when the window closes");
   }
 
+  step('an edit during the only prompt\'s Save is asked about before the window closes');
+  // Only doc is dirty; while its save is in flight, todo3 becomes dirty.
+  const cleanAll = async () => {
+    for (const d of [doc, todo3, other3]) assert.equal(await d.save(), true);
+    assert.deepEqual([doc.isDirty, todo3.isDirty, other3.isDirty], [false, false, false]);
+  };
+  // Dirties `target` while `source`'s next save is in flight.
+  const editDuringSave = (source, target, edit) => {
+    const take = source.requestSnapshot;
+    const state = { done: null };
+    source.requestSnapshot = async function () {
+      const snapshot = await take.call(this);
+      delete source.requestSnapshot;
+      state.done = edit(target);
+      await state.done;
+      return snapshot;
+    };
+    return state;
+  };
+  await cleanAll();
+  await addRowTo(doc, 'single dirty');
+  const single = editDuringSave(doc, todo3, (d) => addTodo(d, 'during the single save'));
+  answer(0, 2); // Save (hours); then Cancel the prompt of the to-do list
+  assert.equal(await workspace.confirmCloseAll(), false, 'cancelled: the window does not close');
+  await single.done;
+  assert.deepEqual(sheets.map((o) => o.message), [
+    'Do you want to save the changes you made to hours.ev.html?',
+    'Do you want to save the changes you made to todo.ev.html?',
+  ]);
+  assert.deepEqual([doc.isDirty, todo3.isDirty], [false, true], 'hours saved, the to-do list kept');
+  assert.equal(workspace.activeDocument(), todo3, 'the newly dirty document is under review');
+
+  step('an edit during a Save in Review each is asked about before the window closes');
+  await cleanAll();
+  await addRowTo(doc, 'review dirty');
+  await addTodo(todo3, 'review dirty');
+  const review = editDuringSave(doc, other3, (d) => addRowTo(d, 'third document dirty'));
+  answer(1, 0, 1, 2); // Review each; Save (hours); Don't save (to-do list); Cancel (third)
+  assert.equal(await workspace.confirmCloseAll(), false, 'cancelled: the window does not close');
+  await review.done;
+  assert.equal(sheets.length, 4, 'the third document was asked about');
+  assert.equal(sheets[0].message, 'Do you want to save the changes to 2 documents?');
+  assert.equal(workspace.activeDocument(), other3, 'the third document is under review');
+  assert.deepEqual([doc.isDirty, todo3.isDirty, other3.isDirty], [false, true, true]);
+
+  step("a document answered Don't save is not asked again");
+  await cleanAll();
+  await addRowTo(doc, 'declined');
+  await addTodo(todo3, 'declined');
+  answer(1, 1, 1); // Review each; Don't save; Don't save
+  assert.equal(await workspace.confirmCloseAll(), true, 'nothing else is dirty: the window may close');
+  assert.equal(sheets.length, 3, 'each document was asked once');
+  await cleanAll();
+  await addTodo(todo3, 'declined alone');
+  answer(1); // Don't save
+  assert.equal(await workspace.confirmCloseAll(), true);
+  assert.equal(sheets.length, 1, 'the one dirty document was asked once');
+  assert.equal(todo3.isDirty, true, "Don't save discards nothing until the window closes");
+  await addRowTo(doc, 'hours dirty');
+  await addRowTo(other3, 'other dirty');
+  workspace.select(todo3.id);
+  answer();
+
   step('an external change to a hidden document shows no sheet');
   answer();
   assert.equal(doc.view.getVisible(), false, 'hours.ev.html is hidden');

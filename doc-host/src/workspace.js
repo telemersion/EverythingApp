@@ -549,15 +549,31 @@ class Workspace {
   }
 
   // The close summary. True if the window may close: nothing is left
-  // unsaved, or the user chose "Don't save" for what is.
+  // unsaved, or the user chose "Don't save" for what is. Whatever a choice
+  // saved, documents can be edited while it ran: anything dirty that was not
+  // answered "Don't save" in this summary gets asked about before it returns.
   async confirmCloseAll() {
+    const declined = new Set();
+    for (;;) {
+      if (!(await this.closeSummary(declined))) return false;
+      await Promise.all(this.openDocuments().map((doc) => doc.settle()));
+      if (!this.openDocuments().some((doc) => doc.isDirty && !declined.has(doc))) return true;
+    }
+  }
+
+  // One pass of the close summary over the dirty documents not in declined;
+  // adds the documents answered "Don't save" to it. True if it did not stop
+  // the close.
+  async closeSummary(declined) {
     const docs = this.openDocuments();
     await Promise.all(docs.map((doc) => doc.settle()));
-    const dirty = docs.filter((doc) => doc.isDirty);
+    const dirty = docs.filter((doc) => doc.isDirty && !declined.has(doc));
     if (dirty.length === 0) return true;
     if (dirty.length === 1) {
       this.select(dirty[0].id);
-      return (await dirty[0].promptSave()) !== 'cancel';
+      const answer = await dirty[0].promptSave();
+      if (answer === 'discard') declined.add(dirty[0]);
+      return answer !== 'cancel';
     }
     const labels = this.labels();
     const choice = await this.sheet({
@@ -577,17 +593,15 @@ class Workspace {
           return false;
         }
       }
-      // Documents could be edited while the saves ran: whatever is dirty now
-      // gets its own summary before anything closes.
-      await Promise.all(this.openDocuments().map((doc) => doc.settle()));
-      if (this.openDocuments().some((doc) => doc.isDirty)) return this.confirmCloseAll();
       return true;
     }
     if (choice === 1) {
       // "Don't save" takes effect only if the window really closes.
       for (const doc of dirty) {
         this.select(doc.id);
-        if ((await doc.promptSave()) === 'cancel') return false;
+        const answer = await doc.promptSave();
+        if (answer === 'cancel') return false;
+        if (answer === 'discard') declined.add(doc);
       }
       return true;
     }
@@ -645,24 +659,28 @@ class Workspace {
     this.restoring = true;
     const failed = [];
     try {
-      const value = await readWorkspaceFile(this.workspaceFile);
-      if (value) {
-        const ids = new Map(); // saved path → doc id, or null
-        for (const p of pathsInFile(value)) ids.set(p, await this.restoreOne(p, failed));
-        this.apply(modelFromWorkspaceFile(value, (p) => ids.get(p) ?? null));
-        const bounds = fitBounds(value.window, screen.getAllDisplays());
-        if (bounds) this.win.setBounds(bounds);
+      try {
+        const value = await readWorkspaceFile(this.workspaceFile);
+        if (value) {
+          const ids = new Map(); // saved path → doc id, or null
+          for (const p of pathsInFile(value)) ids.set(p, await this.restoreOne(p, failed));
+          this.apply(modelFromWorkspaceFile(value, (p) => ids.get(p) ?? null));
+          const bounds = fitBounds(value.window, screen.getAllDisplays());
+          if (bounds) this.win.setBounds(bounds);
+        }
+      } finally {
+        this.restoring = false;
+        this.notice = failed.length > 0 ? { failed } : null;
+        // The window shows once the host UI can draw in it (a failure to load
+        // it is reported by the constructor).
+        await this.hostUi.ready.catch(() => {});
+        if (!this.win.isDestroyed()) this.win.show();
       }
+      this.applyAndFocus(this.model);
     } finally {
-      this.restoring = false;
-      this.notice = failed.length > 0 ? { failed } : null;
-      // The window shows once the host UI can draw in it (a failure to load
-      // it is reported by the constructor).
-      await this.hostUi.ready.catch(() => {});
-      if (!this.win.isDestroyed()) this.win.show();
+      // Opens that arrived during restore() open whatever happened to it.
+      for (const { rawPath, paneId } of this.pendingOpens.splice(0)) await this.open(rawPath, { paneId });
     }
-    this.applyAndFocus(this.model);
-    for (const { rawPath, paneId } of this.pendingOpens.splice(0)) await this.open(rawPath, { paneId });
     return { failed };
   }
 
