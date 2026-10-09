@@ -40,6 +40,7 @@ class HostUi {
     this.lastSent = -Infinity;  // when a state last went out
     this.loaded = false;        // the page has loaded once
     this.disposed = false;
+    this.defaultBackground = '#ffffffff'; // what the view had before the first raise
     this.raised = false;        // above the documents, transparent: a drag runs
 
     const ses = session.fromPartition(PARTITION);
@@ -51,6 +52,13 @@ class HostUi {
     this.webContentsId = wc.id;
     uiContents.add(this.webContentsId);
     hardenContents(wc);
+    this.defaultBackground = this.view.getBackgroundColor?.() || this.defaultBackground;
+    // A crash or a reload of the page while raised must not leave the
+    // documents covered.
+    wc.on('render-process-gone', () => this.lower());
+    wc.on('did-start-navigation', (details) => {
+      if ((details?.isMainFrame ?? true) && !(details?.isSameDocument)) this.lower();
+    });
     // Every load, a reload from its DevTools included, gets the newest state.
     wc.on('did-finish-load', () => {
       this.loaded = true;
@@ -79,13 +87,16 @@ class HostUi {
   schedule() {
     if (this.timer || this.disposed || !this.loaded || this.state === null) return;
     const delay = Math.max(0, this.lastSent + PUSH_INTERVAL_MS - Date.now());
-    this.timer = setTimeout(() => {
-      this.timer = null;
-      const wc = this.view.webContents;
-      if (this.disposed || wc.isDestroyed()) return;
-      this.lastSent = Date.now();
-      wc.send('ui:state', { ...this.state, dragging: this.raised });
-    }, delay);
+    this.timer = setTimeout(() => this.sendNow(), delay);
+  }
+
+  sendNow() {
+    clearTimeout(this.timer);
+    this.timer = null;
+    const wc = this.view.webContents;
+    if (this.disposed || !this.loaded || this.state === null || wc.isDestroyed()) return;
+    this.lastSent = Date.now();
+    wc.send('ui:state', { ...this.state, dragging: this.raised });
   }
 
   // A document's thumbnail (Task 12).
@@ -102,7 +113,7 @@ class HostUi {
     this.raised = true;
     this.view.setBackgroundColor('#00000000');
     this.win.contentView.addChildView(this.view); // re-adding puts it on top
-    this.schedule();
+    this.sendNow(); // the page drops its backgrounds at once: no flash
   }
 
   // Back beneath every document, opaque. Never left on top: the documents
@@ -112,9 +123,9 @@ class HostUi {
     this.raised = false;
     if (!this.win.isDestroyed()) {
       this.win.contentView.addChildView(this.view, 0);
-      this.view.setBackgroundColor('#ffffffff');
+      this.view.setBackgroundColor(this.defaultBackground);
     }
-    this.schedule();
+    this.sendNow();
   }
 
   dispose() {

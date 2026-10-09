@@ -24,6 +24,7 @@
   const strips = new Map();     // paneId → tab strip element, kept across states
   const tabs = new Map();       // docId → tab element, kept across states: a drag holds pointer capture on one
   let drag = null;              // the running tab drag, see startTabDrag
+  let splitDrag = null;         // the running divider drag: { seenRaised, end }
   let swallowClick = false;     // the click that ends a drag selects nothing
   const fadeStarts = new Map(); // `${docId}:${kind}` → { key, start }: the period (fadeKey) and when it first showed
 
@@ -98,7 +99,11 @@
     if (raises) send({ type: 'drag', active: true });
     const report = perFrame(onMove);
     const move = (e) => report(e.clientX, e.clientY);
+    let over = false;
     const end = () => {
+      if (over) return;
+      over = true;
+      if (splitDrag && splitDrag.end === end) splitDrag = null;
       node.classList.remove('dragging');
       for (const [name, handler] of [['pointermove', move], ['pointerup', end], ['pointercancel', end], ['lostpointercapture', end]]) {
         node.removeEventListener(name, handler);
@@ -109,6 +114,7 @@
     node.addEventListener('pointerup', end);
     node.addEventListener('pointercancel', end);
     node.addEventListener('lostpointercapture', end);
+    if (raises) splitDrag = { seenRaised: false, end };
   }
 
   // ---------- Document list ----------
@@ -242,7 +248,7 @@
     swallowClick = false;
     if (!paneOfDoc(docId)) return;
     node.setPointerCapture(event.pointerId);
-    drag = { node, docId, pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, active: false, target: null };
+    drag = { node, docId, pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, active: false, target: null, seenRaised: false };
   }
 
   function moveTabDrag(node, event) {
@@ -345,6 +351,14 @@
   window.addEventListener('keydown', (event) => {
     if (event.key === 'Escape' && drag) finishTabDrag(false);
   });
+
+  // The workspace ends a drag when the window loses focus or another intent
+  // arrives; the page then ends its own drag without dropping anything.
+  function cancelDrags() {
+    if (drag) finishTabDrag(false);
+    if (splitDrag) splitDrag.end();
+  }
+  window.addEventListener('blur', cancelDrags);
 
   // ---------- Banner rows ----------
 
@@ -496,6 +510,16 @@
 
   window.evUi.onState((next) => {
     state = next;
+    // A state with dragging false ends a drag only after one with true was
+    // seen for it: a stale state still in flight must not cancel a drag that
+    // was only just raised.
+    if (next.dragging === true) {
+      if (drag && drag.active) drag.seenRaised = true;
+      if (splitDrag) splitDrag.seenRaised = true;
+    } else {
+      if (drag && drag.active && drag.seenRaised) finishTabDrag(false);
+      if (splitDrag && splitDrag.seenRaised) splitDrag.end();
+    }
     render();
   });
 })();

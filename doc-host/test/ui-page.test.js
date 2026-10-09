@@ -331,3 +331,62 @@ test('a pane\'s only tab cannot split itself, and a state mid-drag keeps the dra
   pointer(dragged, 'pointerup', p2.document.x + p2.document.width - 5, p2.document.y + 50);
   assert.deepEqual(sent, [{ type: 'drag', active: true }, { type: 'drag', active: false }]);
 });
+
+// ---------- A drag the workspace has ended ----------
+
+function startedDrag() {
+  const setup = dragSetup();
+  const { state, tab, pointer } = setup;
+  const p1 = state.layout.panes[0].tabStrip;
+  const p2 = state.layout.panes[1];
+  pointer(tab('a'), 'pointerdown', p1.x + 10, p1.y + 10);
+  pointer(tab('a'), 'pointermove', p1.x + 30, p1.y + 10);
+  const drop = () => pointer(tab('a'), 'pointerup', p2.document.x + p2.document.width - 5, p2.document.y + 50);
+  return { ...setup, drop, over: () => pointer(tab('a'), 'pointermove', p2.document.x + p2.document.width - 5, p2.document.y + 50) };
+}
+
+test('the window losing focus ends a tab drag: the release drops nothing', () => {
+  const { window, sent, over, drop } = startedDrag();
+  over();
+  window.dispatchEvent(new window.Event('blur'));
+  drop();
+  assert.deepEqual(sent, [{ type: 'drag', active: true }, { type: 'drag', active: false }]);
+});
+
+test('a state with dragging false ends a tab drag that was raised; a stale one does not end a just-raised drag', () => {
+  const { state, window, sent, render, over, drop, document } = startedDrag();
+  render({ ...state, dragging: false }); // stale: the raise has not been seen yet
+  over();
+  assert.equal(document.getElementById('drop-marker').hidden, false, 'still dragging');
+  render({ ...state, dragging: true });
+  render({ ...state, dragging: false }); // the workspace ended the drag
+  assert.equal(document.getElementById('drop-marker').hidden, true);
+  drop();
+  assert.deepEqual(sent, [{ type: 'drag', active: true }, { type: 'drag', active: false }]);
+  assert.ok(window);
+});
+
+test('blur and a dragging false state end a divider drag', () => {
+  for (const how of ['blur', 'state']) {
+    const { state, window, document, sent, render } = dragSetup();
+    window.HTMLElement.prototype.setPointerCapture = () => {};
+    const divider = document.querySelector('.divider');
+    const pointer = (type, x, y) => {
+      const event = new window.MouseEvent(type, { bubbles: true, clientX: x, clientY: y, button: 0 });
+      Object.defineProperty(event, 'pointerId', { value: 1 });
+      divider.dispatchEvent(event);
+    };
+    pointer('pointerdown', 500, 300);
+    assert.deepEqual(sent, [{ type: 'drag', active: true }]);
+    if (how === 'blur') window.dispatchEvent(new window.Event('blur'));
+    else {
+      render({ ...state, dragging: false }); // stale, ignored
+      assert.equal(sent.length, 1, 'a stale state does not end it');
+      render({ ...state, dragging: true });
+      render({ ...state, dragging: false });
+    }
+    assert.deepEqual(sent, [{ type: 'drag', active: true }, { type: 'drag', active: false }], how);
+    pointer('pointerup', 500, 300);
+    assert.equal(sent.length, 2, 'the release sends nothing more');
+  }
+});

@@ -788,6 +788,13 @@ async function run(dir) {
   assert.equal(children()[0], hostUi.view);
   assert.equal(hostUi.raised, false);
 
+  step('a reload of the host UI while raised lowers it');
+  sendIntent({ type: 'drag', active: true });
+  await until('raised', () => children().at(-1) === hostUi.view);
+  hostUi.view.webContents.reload();
+  await until('lowered by the reload', () => children()[0] === hostUi.view && hostUi.raised === false);
+  await until('the page is back with the newest state', async () => (await ui('document.querySelectorAll(".strip .tab").length')) > 0);
+
   step('the empty state appears when the last document closes');
   answer(1, 1); // Don't save (hours, to-do list); the other hours sheet is clean
   for (const d of workspace.openDocuments()) {
