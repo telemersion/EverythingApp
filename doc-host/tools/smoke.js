@@ -851,6 +851,30 @@ async function run(dir) {
   workspace.setList({ mode: 'list' });
   await until('list mode draws no pictures', async () => (await ui(`document.querySelectorAll('#entries img').length`)) === 0);
 
+  step('a document loaded hidden is captured once, after a paint delay, when first shown');
+  const lateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'ev-late-'));
+  const latePath = path.join(lateDir, 'late.ev.html');
+  await fs.copyFile(fixture('todo-list'), latePath);
+  mark = captureCount();
+  const openedAt = Date.now();
+  const lateDoc = await workspace.open(latePath); // loads hidden; opening shows it
+  assert.ok(lateDoc, 'late.ev.html opens');
+  assert.equal(workspace.unshownLoads.has(lateDoc.id), false, 'the hidden load is taken up');
+  assert.deepEqual(captured(mark).filter(([id]) => id === lateDoc.id), [], 'no load capture yet');
+  await until('the load capture', () => captured(mark).some(([id, reason]) => id === lateDoc.id && reason === 'load'), 2000);
+  assert.ok(Date.now() - openedAt >= 150, 'after the paint delay');
+  await wait(400);
+  assert.deepEqual(captured(mark).filter(([id]) => id === lateDoc.id), [[lateDoc.id, 'load']], 'exactly one');
+
+  step('a reload of a hidden document is captured at once');
+  workspace.select(shownId);
+  await wait(50);
+  assert.equal(workspace.shown.has(lateDoc.id), false, 'late.ev.html is hidden');
+  mark = captureCount();
+  workspace.rendered(lateDoc, 'reload');
+  assert.deepEqual(captured(mark), [[lateDoc.id, 'reloaded']]);
+  await fs.rm(lateDir, { recursive: true, force: true });
+
   step('the empty state appears when the last document closes');
   answer(1, 1); // Don't save (hours, to-do list); the other hours sheet is clean
   for (const d of workspace.openDocuments()) {

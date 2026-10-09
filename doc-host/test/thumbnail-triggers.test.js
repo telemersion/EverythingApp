@@ -78,3 +78,29 @@ test('documents are independent and delayMs is configurable', (t) => {
   t.mock.timers.tick(100);
   assert.deepEqual(captures, [['a', 'saved'], ['b', 'changed']]);
 });
+
+test('a first show captures its load after the paint delay, if still shown', (t) => {
+  let shown = true;
+  const { triggers, captures } = make(t, { paintMs: 200, shown: () => shown });
+  triggers.firstShown('d1');
+  t.mock.timers.tick(199);
+  assert.deepEqual(captures, []);
+  t.mock.timers.tick(1);
+  assert.deepEqual(captures, [['d1', 'load']]);
+  shown = false;
+  triggers.firstShown('d2');
+  t.mock.timers.tick(300);
+  assert.equal(captures.length, 1, 'no longer shown: nothing');
+});
+
+test('a hidden, saved or forgotten document drops its pending first-show capture', (t) => {
+  const { triggers, captures } = make(t);
+  triggers.firstShown('a');
+  triggers.hidden('a');
+  triggers.firstShown('b');
+  triggers.saved('b');
+  triggers.firstShown('c');
+  triggers.forget('c');
+  t.mock.timers.tick(1000);
+  assert.deepEqual(captures, [['a', 'hidden'], ['b', 'saved']]);
+});

@@ -90,6 +90,7 @@ class Workspace {
     this.thumbnailTriggers = createThumbnailTriggers({
       capture: (docId, reason) => this.captureThumbnail(docId, reason),
       captureHidden: false, // a view never shown cannot be captured
+      shown: (docId) => this.shown.has(docId) && !!this.documentById(docId),
     });
 
     // Hidden until restore() has given it its bounds.
@@ -316,8 +317,9 @@ class Workspace {
     if (visible === was) return;
     if (visible) {
       this.shown.add(docId);
-      // Its first load went uncaptured because the view was hidden.
-      if (this.unshownLoads.delete(docId)) this.thumbnailTriggers.loaded(docId, true);
+      // Its first load went uncaptured because the view was hidden; the view
+      // has not painted yet, so the capture waits a moment.
+      if (this.unshownLoads.delete(docId)) this.thumbnailTriggers.firstShown(docId);
     } else {
       this.shown.delete(docId);
       this.thumbnailTriggers.hidden(docId);
