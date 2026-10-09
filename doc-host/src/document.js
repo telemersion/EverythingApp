@@ -334,7 +334,8 @@ class Document {
       defaultId: 0,
       cancelId: 1,
     });
-    if (choice !== 0) return false;
+    // A second call queued behind this sheet, or a close meanwhile: write nothing.
+    if (choice !== 0 || !this.status.kitUpdate || this.disposed) return false;
     const ok = await this.inSaveTurn(() => this.doSave({
       kit: newest,
       kitFailure: `The kit of ${this.name} could not be updated. The file on disk was not changed.`,
@@ -344,11 +345,24 @@ class Document {
     return true;
   }
 
-  // The banner's Undo, until the document is closed: no question.
+  // The banner's Undo, until the document is closed: no question for a clean
+  // document; unsaved changes are saved with it, so that asks first.
   async undoKitUpdate() {
     const { kitUpdated } = this.status;
     const previous = kitUpdated && findKit(kitUpdated.from);
     if (!previous || this.disposed) return false;
+    await this.settle();
+    if (this.isDirty) {
+      const choice = await this.ui.sheet({
+        type: 'question',
+        message: `Undo the kit update of ${this.name}?`,
+        detail: `Kit ${kitUpdated.from} is restored. The previous file is kept in the version store. Your unsaved changes are saved with it.`,
+        buttons: ['Undo kit update', 'Cancel'],
+        defaultId: 0,
+        cancelId: 1,
+      });
+      if (choice !== 0 || !this.status.kitUpdated || this.disposed) return false;
+    }
     const ok = await this.inSaveTurn(() => this.doSave({
       kit: previous,
       kitFailure: `The kit of ${this.name} could not be restored. The file on disk was not changed.`,

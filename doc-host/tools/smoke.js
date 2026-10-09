@@ -940,6 +940,7 @@ async function run(dir) {
   const versionNames = async () => (await exists(noteStore) ? await fs.readdir(noteStore) : []).filter((n) => n.endsWith('.html'));
   assert.deepEqual(await versionNames(), []);
   const generationBefore = note.generation;
+  const dataSection = async () => parseDocument(await fs.readFile(notePath, 'utf8')).parts.data;
   answer(0); // Update kit
   await note.onBannerAction('kit-update', 'update-kit');
   assert.deepEqual(sheets.map((o) => [o.message, o.detail, o.buttons, o.defaultId, o.cancelId]), [[
@@ -962,6 +963,7 @@ async function run(dir) {
   await until('the note reloaded', () => !note.view.webContents.isLoading());
   await until('the note shows its data', async () => (await noteJs('document.getElementById("text").value')) === 'Remember the milk');
   assert.equal(note.status.kitUpdate, null);
+  const dataAfterUpdate = await dataSection();
   assert.deepEqual(note.status.kitUpdated, { from: '1.0.0', to: '1.1.0' });
   assert.deepEqual(described().banners.map((b) => [b.kind, b.message]), [['kit-updated', 'Kit updated to 1.1.0.']]);
   assert.equal(menu.getMenuItemById('update-kit').enabled, false);
@@ -980,6 +982,37 @@ async function run(dir) {
   assert.equal(described().badge, 'kit-update');
   assert.equal(menu.getMenuItemById('undo-kit').enabled, false);
   assert.equal(menu.getMenuItemById('update-kit').enabled, true);
+  assert.equal((await versionNames()).length, 2, 'Undo stored a second version');
+  assert.equal(await dataSection(), dataAfterUpdate, 'a clean kit write leaves the data section byte-identical');
+  await until('the note reloaded', () => !note.view.webContents.isLoading());
+
+  step('Undo with unsaved changes asks first and saves them with it');
+  answer(0); // Update kit (clean document)
+  await note.updateKit();
+  await until('the note reloaded', () => !note.view.webContents.isLoading());
+  assert.equal(await dataSection(), dataAfterUpdate, 'the clean update keeps the data bytes');
+  assert.equal((await versionNames()).length, 3);
+  await noteJs(`(() => { const t = document.getElementById('text'); t.value = 'Edited after update';
+    t.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+  await until('the note is dirty after the update', () => note.isDirty);
+  const beforeUndo = await fs.readFile(notePath, 'utf8');
+  answer(1); // Cancel
+  assert.equal(await note.undoKitUpdate(), false);
+  assert.deepEqual(sheets.map((o) => [o.message, o.detail, o.buttons, o.defaultId, o.cancelId]), [[
+    'Undo the kit update of note.ev.html?',
+    'Kit 1.0.0 is restored. The previous file is kept in the version store. Your unsaved changes are saved with it.',
+    ['Undo kit update', 'Cancel'], 0, 1,
+  ]]);
+  assert.equal(await fs.readFile(notePath, 'utf8'), beforeUndo, 'Cancel writes nothing');
+  assert.equal((await versionNames()).length, 3);
+  assert.equal(note.isDirty, true);
+  answer(0); // Undo kit update
+  assert.equal(await note.undoKitUpdate(), true);
+  assert.equal(sheets.length, 1);
+  afterKit = parseDocument(await fs.readFile(notePath, 'utf8')).parts;
+  assert.equal(afterKit.kitVersion, '1.0.0');
+  assert.equal(JSON.parse(afterKit.data).text, 'Edited after update');
+  assert.equal((await versionNames()).length, 4);
   await until('the note reloaded', () => !note.view.webContents.isLoading());
 
   step('a kit update that hits a data conflict asks first');
