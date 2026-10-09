@@ -3,12 +3,14 @@
 // Pure: when a document's thumbnail is captured (Decision Q10). The caller
 // does the capturing; timers are injected for the tests.
 //
-//   loaded(docId, visible)    first load: at once if visible, or hidden and captureHidden
+//   loaded(docId, visible)    first load: visible: 'load' capture after paintMs (the page has
+//                             finished loading but may not have painted yet), only if still
+//                             shown() then; hidden: at once if captureHidden
 //   hidden / saved / reloaded at once; each cancels a pending change capture
 //   changed(docId, visible)   visible: (re)starts the delayMs timer; hidden: nothing
-//   firstShown(docId)         a document loaded hidden is shown for the first time: 'load'
-//                             capture after paintMs (its view may not have painted yet),
-//                             only if still shown() then; any other capture cancels it
+//   firstShown(docId)         a document loaded hidden is shown for the first time: the same
+//                             deferred 'load' capture as a visible load
+//                             (any other capture or a visible change cancels it)
 //   forget(docId)             cancels
 function createThumbnailTriggers({
   capture,
@@ -38,9 +40,19 @@ function createThumbnailTriggers({
     capture(docId, reason);
   };
 
+  // The first 'load' capture waits for a paint, and only happens if still shown then.
+  const loadAfterPaint = (docId) => {
+    cancel(docId);
+    firstShows.set(docId, setTimeout(() => {
+      firstShows.delete(docId);
+      if (shown(docId)) capture(docId, 'load');
+    }, paintMs));
+  };
+
   return {
     loaded(docId, visible) {
-      if (visible || captureHidden) now(docId, 'load');
+      if (visible) loadAfterPaint(docId);
+      else if (captureHidden) now(docId, 'load');
     },
     hidden: (docId) => now(docId, 'hidden'),
     saved: (docId) => now(docId, 'saved'),
@@ -53,13 +65,7 @@ function createThumbnailTriggers({
         capture(docId, 'changed');
       }, delayMs));
     },
-    firstShown(docId) {
-      cancel(docId);
-      firstShows.set(docId, setTimeout(() => {
-        firstShows.delete(docId);
-        if (shown(docId)) capture(docId, 'load');
-      }, paintMs));
-    },
+    firstShown: loadAfterPaint,
     forget: cancel,
   };
 }

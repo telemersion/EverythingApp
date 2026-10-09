@@ -865,13 +865,13 @@ async function run(dir) {
   assert.equal(getMenuItemById('list-mode-thumbnails').checked, true, 'thumbnails mode is marked');
   workspace.setList({ mode: initialMode });
 
-  step('a document loaded hidden is captured once, after a paint delay, when first shown');
+  step('a first load is captured once, after a paint delay (hidden then shown, or visible at load)');
   const lateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'ev-late-'));
   const latePath = path.join(lateDir, 'late.ev.html');
   await fs.copyFile(fixture('todo-list'), latePath);
   mark = captureCount();
   const openedAt = Date.now();
-  const lateDoc = await workspace.open(latePath); // loads hidden; opening shows it
+  const lateDoc = await workspace.open(latePath); // loads hidden or visible; opening shows it
   assert.ok(lateDoc, 'late.ev.html opens');
   assert.equal(workspace.unshownLoads.has(lateDoc.id), false, 'the hidden load is taken up');
   assert.deepEqual(captured(mark).filter(([id]) => id === lateDoc.id), [], 'no load capture yet');

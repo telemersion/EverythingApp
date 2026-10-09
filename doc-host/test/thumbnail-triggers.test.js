@@ -54,12 +54,43 @@ test('a hidden first load is captured only when captureHidden', (t) => {
   on.triggers.loaded('d1', false);
   assert.deepEqual(on.captures, [['d1', 'load']]);
   on.triggers.loaded('d2', true);
+  assert.deepEqual(on.captures, [['d1', 'load']], 'a visible load waits for a paint');
+  t.mock.timers.tick(200);
   assert.deepEqual(on.captures, [['d1', 'load'], ['d2', 'load']]);
   const off = make(t, { captureHidden: false });
   off.triggers.loaded('d1', false);
   assert.deepEqual(off.captures, []);
   off.triggers.loaded('d2', true);
+  t.mock.timers.tick(200);
   assert.deepEqual(off.captures, [['d2', 'load']]);
+});
+
+test('a load while visible is captured after the paint delay, if still shown', (t) => {
+  let shown = true;
+  const { triggers, captures } = make(t, { paintMs: 200, shown: () => shown });
+  triggers.loaded('d1', true);
+  t.mock.timers.tick(199);
+  assert.deepEqual(captures, []);
+  t.mock.timers.tick(1);
+  assert.deepEqual(captures, [['d1', 'load']]);
+  shown = false;
+  triggers.loaded('d2', true);
+  t.mock.timers.tick(300);
+  assert.equal(captures.length, 1, 'no longer shown: nothing');
+});
+
+test('a hidden, saved, reloaded or forgotten document drops its pending visible-load capture', (t) => {
+  const { triggers, captures } = make(t);
+  triggers.loaded('a', true);
+  triggers.hidden('a');
+  triggers.loaded('b', true);
+  triggers.saved('b');
+  triggers.loaded('c', true);
+  triggers.forget('c');
+  triggers.loaded('d', true);
+  triggers.reloaded('d');
+  t.mock.timers.tick(1000);
+  assert.deepEqual(captures, [['a', 'hidden'], ['b', 'saved'], ['d', 'reloaded']]);
 });
 
 test('forget cancels a pending capture', (t) => {
