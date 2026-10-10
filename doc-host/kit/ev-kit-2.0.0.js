@@ -1,9 +1,9 @@
-/* EverythingApp kit 1.1.0 (host API v1). Part of the document frame:
+/* EverythingApp kit 2.0.0 (host API v1). Part of the document frame:
    the host checks this exact text by hash. Do not edit it in a document. */
 (function () {
   'use strict';
 
-  var KIT_VERSION = '1.1.0';
+  var KIT_VERSION = '2.0.0';
   var kitText = document.currentScript.textContent;
   var styleText = document.getElementById('ev-style').textContent;
   var docTypeMeta = document.querySelector('meta[name="ev-doc-type"]');
@@ -12,8 +12,11 @@
     api: document.querySelector('meta[name="ev-host-api"]').getAttribute('content'),
     docType: docTypeMeta.getAttribute('content'),
     docTypeVersion: docTypeMeta.getAttribute('data-version'),
+    docId: document.querySelector('meta[name="ev-doc-id"]').getAttribute('content'),
     title: document.querySelector('head > title').textContent
   };
+  var manifestText = document.getElementById('ev-manifest').textContent;
+  var modules = {};
   var initialized = false;
 
   function escapeJson(json) {
@@ -26,14 +29,106 @@
       '  <meta charset="utf-8">\n' +
       '  <meta name="ev-host-api" content="' + p.api + '">\n' +
       '  <meta name="ev-doc-type" content="' + p.docType + '" data-version="' + p.docTypeVersion + '">\n' +
+      '  <meta name="ev-doc-id" content="' + p.docId + '">\n' +
       '  <title>' + p.title + '</title>\n' +
       '  <style id="ev-style">' + p.style + '</style>\n' +
+      '  <script type="application/json" id="ev-manifest">' + p.manifest + '<\/script>\n' +
       '</head>\n<body>\n' +
       '  <div id="ev-app"></div>\n' +
       '  <script type="application/json" id="ev-data">' + p.data + '<\/script>\n' +
       '  <script id="ev-kit" data-kit-version="' + p.kitVersion + '">' + p.kit + '<\/script>\n' +
+      p.modules.map(function (m) {
+        return '  <script id="ev-module-' + m.name + '" data-module-version="' + m.version + '">' + m.text + '<\/script>\n';
+      }).join('') +
       '  <script id="ev-script">' + p.script + '<\/script>\n' +
       '</body>\n</html>\n';
+  }
+
+  // The module elements come after the kit, so they are read when needed.
+  function moduleParts() {
+    var els = document.querySelectorAll('script[id^="ev-module-"]');
+    var parts = [];
+    for (var i = 0; i < els.length; i++) {
+      parts.push({ name: els[i].id.slice('ev-module-'.length), version: els[i].getAttribute('data-module-version'), text: els[i].textContent });
+    }
+    return parts;
+  }
+
+  function randomHex(bytes) {
+    var values = crypto.getRandomValues(new Uint8Array(bytes));
+    var out = '';
+    for (var i = 0; i < values.length; i++) out += (values[i] < 16 ? '0' : '') + values[i].toString(16);
+    return out;
+  }
+
+  // ---------- Data designed for merging ----------
+
+  function newId() {
+    return randomHex(8);
+  }
+
+  // Sort keys: strings over DIGITS (in ASCII order) that never end in '0', so
+  // there is always room before a key; compared as plain strings.
+  var DIGITS = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz';
+  var SORT_KEY = /^[0-9A-Za-z]*[1-9A-Za-z]$/;
+
+  function midpoint(a, b) { // a < b; a may be '', b may be null (no upper bound)
+    if (b !== null) {
+      var n = 0;
+      while ((a[n] || '0') === b[n]) n++;
+      if (n > 0) return b.slice(0, n) + midpoint(a.slice(n), b.slice(n));
+    }
+    var da = a ? DIGITS.indexOf(a[0]) : 0;
+    var db = b !== null ? DIGITS.indexOf(b[0]) : DIGITS.length;
+    if (db - da > 1) return DIGITS[Math.round((da + db) / 2)];
+    if (b !== null && b.length > 1) return b.slice(0, 1);
+    return DIGITS[da] + midpoint(a.slice(1), null);
+  }
+
+  function orderBetween(before, after) {
+    [before, after].forEach(function (key) {
+      if (key !== null && (typeof key !== 'string' || !SORT_KEY.test(key))) {
+        throw new Error('EvKit.orderBetween: ' + JSON.stringify(key) + ' is not a sort key (letters and digits, not ending in 0) or null.');
+      }
+    });
+    if (before !== null && after !== null && !(before < after)) {
+      throw new Error('EvKit.orderBetween: ' + JSON.stringify(before) + ' must sort before ' + JSON.stringify(after) + '.');
+    }
+    return midpoint(before || '', after);
+  }
+
+  function ordered(map, key) {
+    key = key || 'order';
+    return Object.keys(map).map(function (id) { return [id, map[id]]; }).sort(function (x, y) {
+      var a = x[1] && typeof x[1][key] === 'string' ? x[1][key] : null;
+      var b = y[1] && typeof y[1][key] === 'string' ? y[1][key] : null;
+      if (a !== b) {
+        if (a === null) return 1;
+        if (b === null) return -1;
+        return a < b ? -1 : 1;
+      }
+      return x[0] < y[0] ? -1 : x[0] > y[0] ? 1 : 0;
+    });
+  }
+
+  // ---------- Modules ----------
+
+  function defineModule(name, version, exports) {
+    if (Object.prototype.hasOwnProperty.call(modules, name)) {
+      throw new Error('EvKit.defineModule: module ' + name + ' is already defined.');
+    }
+    modules[name] = { version: version, exports: exports };
+  }
+
+  function module(name, major) {
+    if (!Object.prototype.hasOwnProperty.call(modules, name)) {
+      throw new Error('This document has no module ' + name + '. Add it to the document (document specification, section 6).');
+    }
+    var found = modules[name];
+    if (parseInt(found.version, 10) !== major) {
+      throw new Error('This document has module ' + name + ' ' + found.version + ', but the script needs major version ' + major + '.');
+    }
+    return found.exports;
   }
 
   // ---------- Browser fallback: save a new copy of this file ----------
@@ -142,9 +237,9 @@
     function toHtml() {
       return buildDocument({
         lang: frame.lang, api: frame.api, docType: frame.docType,
-        docTypeVersion: frame.docTypeVersion, title: frame.title,
-        style: styleText, data: escapeJson(serialize()),
-        kitVersion: KIT_VERSION, kit: kitText, script: scriptText
+        docTypeVersion: frame.docTypeVersion, docId: frame.docId, title: frame.title,
+        style: styleText, manifest: manifestText, data: escapeJson(serialize()),
+        kitVersion: KIT_VERSION, kit: kitText, modules: moduleParts(), script: scriptText
       });
     }
 
@@ -166,6 +261,8 @@
 
     function save() {
       if (host) return Promise.resolve(false);
+      // A new document gets its id with its first save (document specification, rule 10).
+      if (!frame.docId) frame.docId = randomHex(16);
       return fallbackSave(toHtml()).then(function (ok) {
         if (ok) setDirty(false);
         return ok;
@@ -212,7 +309,10 @@
   }
 
   Object.defineProperty(window, 'EvKit', {
-    value: Object.freeze({ version: KIT_VERSION, init: init }),
+    value: Object.freeze({
+      version: KIT_VERSION, init: init, newId: newId, orderBetween: orderBetween, ordered: ordered,
+      module: module, defineModule: defineModule
+    }),
     writable: false,
     configurable: false
   });

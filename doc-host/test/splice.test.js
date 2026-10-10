@@ -1,5 +1,8 @@
 'use strict';
 
+// The kit-update tests need an older kit: the test-only kit 1.9.0.
+process.env.EV_TEST_KITS = '1';
+
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { escapeJson, splice, replaceKit, setDocId } = require('../src/splice');
@@ -50,10 +53,10 @@ test('splice finds the real data block although the kit source mentions its tag'
 });
 
 test('replaceKit changes only the kit and its version', () => {
-  const old = findKit('1.0.0');
+  const old = findKit('1.9.0');
   const html = makeDocument({ kitVersion: old.version, kit: old.text });
   const next = replaceKit(html, currentKit());
-  assert.deepEqual(parseDocument(next).parts, { ...parseDocument(html).parts, kitVersion: '1.1.0', kit: currentKit().text });
+  assert.deepEqual(parseDocument(next).parts, { ...parseDocument(html).parts, kitVersion: '2.0.0', kit: currentKit().text });
   assert.equal(checkDocument(next).ok, true);
 });
 

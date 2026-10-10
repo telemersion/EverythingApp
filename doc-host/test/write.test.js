@@ -1,5 +1,8 @@
 'use strict';
 
+// The kit-update tests need an older kit: the test-only kit 1.9.0.
+process.env.EV_TEST_KITS = '1';
+
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
@@ -186,7 +189,7 @@ async function setupOutdated() {
   const dir = await mkTemp('ev-write-');
   const filePath = path.join(dir, 'old.ev.html');
   const storeDir = path.join(dir, 'store');
-  const old = findKit('1.0.0');
+  const old = findKit('1.9.0');
   await fs.writeFile(filePath, makeDocument({ kitVersion: old.version, kit: old.text }), 'utf8');
   return { dir, filePath, storeDir };
 }
@@ -205,7 +208,7 @@ test('writeDocument with a kit and no data replaces only the kit and keeps the p
   assert.equal(result, onDisk);
   assert.deepEqual(parseDocument(onDisk).parts, {
     ...parseDocument(original).parts,
-    kitVersion: '1.1.0',
+    kitVersion: '2.0.0',
     kit: currentKit().text,
   });
   assert.deepEqual(await storedVersions(filePath, storeDir), [original]);
@@ -219,7 +222,7 @@ test('writeDocument with a kit and data replaces both in one write', async () =>
   assert.deepEqual(parseDocument(onDisk).parts, {
     ...parseDocument(original).parts,
     data: '{"rows":[]}',
-    kitVersion: '1.1.0',
+    kitVersion: '2.0.0',
     kit: currentKit().text,
   });
   assert.deepEqual(await storedVersions(filePath, storeDir), [original]);
@@ -251,5 +254,5 @@ test('a kit write checks the expected data hash like a save', async () => {
   assert.equal(await fs.readFile(filePath, 'utf8'), original);
   const good = sectionHashes(parseDocument(original).parts).data;
   await writeDocument(filePath, null, { storeDir, kit: currentKit(), expectedDataHash: good });
-  assert.equal(parseDocument(await fs.readFile(filePath, 'utf8')).parts.kitVersion, '1.1.0');
+  assert.equal(parseDocument(await fs.readFile(filePath, 'utf8')).parts.kitVersion, '2.0.0');
 });
