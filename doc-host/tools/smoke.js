@@ -20,6 +20,7 @@ const { Workspace, closeSummaryDetail } = require('../src/workspace');
 const { buildMenu } = require('../src/menu');
 const { docsInOrder, activeDocId, panesInOrder, paneOf, splitPane } = require('../src/workspace-model');
 const { checkDocument } = require('../src/conformance');
+const { fitBounds } = require('../src/workspace-file');
 const { parseDocument, buildDocument } = require('../src/frame');
 const { pathKey } = require('../src/write');
 const { findKit } = require('../kit');
@@ -702,16 +703,16 @@ async function run(dir) {
     assert.deepEqual(layoutOf(third), [{ tabs: [good], selected: good }]);
     assert.equal(third.activeDocument().filePath, good);
     assert.equal(third.win.isVisible(), true, 'the window shows');
-    // The saved bounds, unless the display is too small for them (CI runners):
-    // then the window is fitted into the work area.
+    // The saved bounds as fitBounds fits them to this display (CI runners are
+    // small); macOS may move the window fully into the work area on top.
     const saved = { x: 80, y: 80, width: 900, height: 700 };
-    const area = screen.getPrimaryDisplay().workArea;
+    const fitted = fitBounds(saved, screen.getAllDisplays());
     const bounds = third.win.getBounds();
-    if (saved.y + saved.height <= area.y + area.height && saved.x + saved.width <= area.x + area.width) {
-      assert.deepEqual(bounds, saved);
-    } else {
-      assert.ok(bounds.x >= area.x && bounds.y >= area.y && bounds.x + bounds.width <= area.x + area.width
-        && bounds.y + bounds.height <= area.y + area.height, `inside the work area: ${JSON.stringify({ bounds, area })}`);
+    if (!isDeepStrictEqual(bounds, fitted)) {
+      const area = screen.getPrimaryDisplay().workArea;
+      assert.ok(process.platform === 'darwin' && bounds.x >= area.x && bounds.y >= area.y
+        && bounds.x + bounds.width <= area.x + area.width && bounds.y + bounds.height <= area.y + area.height,
+      `fitted ${JSON.stringify(fitted)} or inside the work area: ${JSON.stringify({ bounds, area })}`);
     }
     // The host UI names each one at the top of the list, which shows while it does.
     assert.equal(third.model.list.visible, true);
