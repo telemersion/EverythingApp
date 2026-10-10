@@ -1,0 +1,56 @@
+# Packaging for EverythingApp (M3). Releases follow Telemersive Gateway
+# (telemersion/telemersive-portbay); see docs/guides/releasing.md.
+appId: ch.zhdk.telemersion.everythingapp
+productName: EverythingApp
+directories:
+  buildResources: build
+  output: dist
+files:
+  - src/**
+  - kit/**
+  - package.json
+  - "!**/*.test.js"
+
+# The signed app must not run arbitrary code for other software: no
+# ELECTRON_RUN_AS_NODE, no NODE_OPTIONS, no inspector, only the checked asar.
+electronFuses:
+  runAsNode: false
+  enableNodeOptionsEnvironmentVariable: false
+  enableNodeCliInspectArguments: false
+  onlyLoadAppFromAsar: true
+  enableEmbeddedAsarIntegrityValidation: true
+
+# A possible handler for HTML, never the default by itself: the user chooses.
+fileAssociations:
+  - ext: [html, htm]
+    name: HTML Document
+    role: Viewer
+    rank: Alternate
+
+mac:
+  target:
+    - target: dmg
+      arch: [x64, arm64]
+    - target: zip
+      arch: [x64, arm64]
+  artifactName: EverythingApp-${version}-${arch}.${ext}
+  category: public.app-category.productivity
+  identity: "Developer ID Application"
+  hardenedRuntime: true
+
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+  artifactName: EverythingApp-Setup-${version}.${ext}
+
+# Per user: no administrator rights, so updates install silently on quit.
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: false
+
+publish:
+  provider: github
+  owner: telemersion
+  repo: EverythingApp
