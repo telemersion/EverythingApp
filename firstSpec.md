@@ -26,7 +26,7 @@ Terms are defined in [docs/reference/glossary.md](docs/reference/glossary.md), t
 
 ## Audience
 
-v0.1 is a single-user tool. Team use (documents exchanged between people, shared drives) is an explicit later goal: v0.1 decisions must not block it, but need not deliver it.
+v0.1 is a single-user tool. Team use is an explicit later goal: v0.1 decisions must not block it, but need not deliver it. Its design was decided on 2026-10-10 (see [Collaboration](#collaboration)): a small team that trusts each other, on a team server it controls, built after M4.
 
 ## User story
 
@@ -82,13 +82,18 @@ Not in M2: several windows, the same document in two panes, autosave, unsaved ch
 - Auto-update via GitHub Releases and `electron-updater`: the host checks the update feed at startup and via Help → Check for updates, downloads new versions in the background and installs them on restart. The refusal for a newer API version offers the same check.
 - Version store clean-up at startup: each entry has a `meta.json` (absolute path, file name, `ev-doc-type`, data block hash, last seen). Parent folder missing (e.g. unmounted volume) → skip; file missing → mark orphaned; orphaned for 90 days → delete. A total size cap (e.g. 500 MB) removes the oldest orphans first, then the oldest versions of live documents, never a document's newest version.
 
-**M4 · Privileges** (v0.2, not part of v0.1): documents can request privileges beyond the sandbox, and the user can grant them. See the open question "Privileges requested by a document".
+After M3 the order is (decided 2026-10-10; milestone numbers are assigned when each one is planned):
+
+1. **Format groundwork**: a kit and document specification release that makes every document generated from then on ready for collaboration: document id, module slots, declared text fields, data design rules. See [Collaboration](#collaboration), "Format groundwork".
+2. **Workbench and agent connector** (single user): behaviour is developed in a workbench through a local agent connector. Answers the open question "Where generation happens".
+3. **M4 · Privileges** (v0.2, not part of v0.1): documents can request privileges beyond the sandbox, and the user can grant them. See the open question "Privileges requested by a document".
+4. **Collaboration**, in several milestones: team server and sync; roles and approvals; Library and history.
 
 Non-goals for v0.1, besides the skill that generates documents (defined once the specification is stable):
 
 - Template upgrade (regenerate behaviour, keep data).
-- Documents that rewrite their own code through the host API. The host never writes a section other than the data block (it may replace the kit, which is frame); behaviour is improved outside the host by an agent editing the file on disk (an in-host "Improve this document…" command may follow later).
-- Attachments, multiple data blocks, network access, multi-user sync.
+- Documents that rewrite their own code through the host API. The host never creates or changes behaviour: in v0.1 it writes only the data block (and replaces the kit, which is frame, after the user confirms); behaviour is improved outside the host by an agent editing the file on disk. From collaboration on, the host also installs behaviour versions that carry a maintainer's approval, and behaviour is developed in a workbench (see [Collaboration](#collaboration)).
+- Attachments, multiple data blocks, network access, multi-user sync (designed, see [Collaboration](#collaboration)).
 - Linux packaging.
 - Re-linking the history of a moved document (match an orphaned store entry by file name, `ev-doc-type` and data block hash). `meta.json` already records what is needed.
 - "Save as…" and "Follow moved documents": when a document's file is moved or deleted, the host now only says so; later it can save the open data to a new file or follow the file to its new place.
@@ -261,14 +266,14 @@ Required settings and checks:
 - **No path from the page.** The path is resolved in the main process from `event.sender.id`. The API has no path parameter.
 - **No navigation.** Block `will-navigate` and `will-redirect`; deny `setWindowOpenHandler`; open no new windows.
 - **Custom protocol, closed by default.** Documents are served by the main process under `ev-doc://<random-id>/` (`protocol.handle`), a fresh random id per opened document. The handler answers exactly that one URL with the file content and a CSP header (`default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data: blob:; font-src data:`); every other request on the scheme returns 404. `file://`, `http(s)://` and all other schemes are blocked for document sessions. The document never learns its real path.
-- **Network.** M1 does no name resolution at all (`host-resolver-rules` maps every name to "not found"), so documents cannot leak data through DNS lookups such as dns-prefetch. WebRTC UDP is disabled, and every document session goes through a proxy that refuses every connection. M3 adds one exception for the update feed. The only network access in the whole host is auto-update, made by the main process (not by any document session) to one fixed update feed.
+- **Network.** M1 does no name resolution at all (`host-resolver-rules` maps every name to "not found"), so documents cannot leak data through DNS lookups such as dns-prefetch. WebRTC UDP is disabled, and every document session goes through a proxy that refuses every connection. M3 adds one exception for the update feed. The only network access in the whole host is auto-update, made by the main process (not by any document session) to one fixed update feed. Collaboration adds a second connection, also from the main process only: sync with the team server. Document sessions never get network access; collaboration is a host feature, not a document privilege.
 - **No input to subframes.** The host injects a user style that gives iframes and frames no pointer input, so a file dropped onto one lands on the document itself, where the host opens it. A document does not receive dropped files; it can import files through a file picker or paste. Known limit of M1: the drop guard is a set of event listeners the preload adds to the page, and `document.open()` removes every listener on the page. A document that calls it once its own parsing is done (from a timer or an event handler) can then receive files the user drops onto it (their contents, not their paths); confirmed with a real drag in the M1 manual check (2026-10-07). Patching `document.open` from the preload is not a reliable guard (another frame's copy of the function would likely bypass it); closing this needs a guard outside the page (M4).
 - **Size limits.** Documents over 60 MB are refused on open; data blocks over 50 MB are not written. The 60 MB limit is checked only on open in M1.
 - **No permissions.** `setPermissionRequestHandler` denies camera, microphone, geolocation, notifications, fullscreen etc.
 - **No native dialogs (M2).** `webPreferences.disableDialogs`: `alert()` does nothing and `confirm()` returns `false`. Electron shows them as native message boxes that look like the host's own and name no document, and it offers no way to show them anywhere else, so they are turned off. Documents ask for confirmation inside their own UI.
 - **Host UI outside the document (M2).** Host messages appear only in host areas (document list, tab strips, banner rows); a document's view never overlaps them. The host-UI view only accepts its own messages (`ui:*`) and documents only theirs (`doc:*`), told apart by the sending view.
 - **Validate writes.** The host rejects `doc:save-data` with non-string input, invalid JSON and payloads over a size limit (e.g. 50 MB).
-- **Data, not code (permanent).** The Host API is data-only in every version. The host writes the data block on save and the kit on a user-confirmed kit update; it never writes the style or script section on behalf of a document. Kit text comes only from the host's own list of published kits, never from the document, so a document cannot rewrite any code through the API.
+- **Data, not code (permanent).** The Host API is data-only in every version. The host writes the data block on save and the kit on a user-confirmed kit update; it never writes the style or script section on behalf of a document. Kit text comes only from the host's own list of published kits, never from the document, so a document cannot rewrite any code through the API. From collaboration on, the host also installs module versions from its own list and behaviour versions that carry a maintainer's approval; neither ever comes from the running document.
 - **Origin isolation.** The random id gives each opened document its own origin, so documents cannot read each other's storage.
 - **No persistent browser storage.** Document sessions run in memory (no `persist:` partition): `localStorage`, IndexedDB and caches are empty on every open and leave no traces on disk. View state (filters, scroll position) lasts one session; whatever should survive belongs in the data block.
 
@@ -280,6 +285,158 @@ The host never breaks an old document: API versions are only ever added, and doc
 - **Feature detection.** Documents check `window.evHost` and `evHost.version` and keep a working browser path.
 - **Data versus behaviour.** Because data lives in one block, a document's behaviour can be replaced while its content stays. The `ev-doc-type` meta tag identifies which behaviour a file carries.
 - **Template upgrade (post v0.1).** The host offers "Upgrade document": regenerate the behaviour, or take a newer template, for the same `ev-doc-type`, insert the old data block, keep the previous file in the version store. If the data shape changed, the new template ships a `migrate(oldData, fromVersion)` function that runs once on load.
+
+## Collaboration
+
+Designed on 2026-10-10 in a design interview; built after M4 (see the order under Scope). Terms are in the glossary's Collaboration section. The decisions with lasting trade-offs are recorded in [ADR 0002](docs/adr/0002-file-carries-only-unsynced-history.md), [ADR 0003](docs/adr/0003-modules-published-with-the-kit.md) and [ADR 0004](docs/adr/0004-data-merges-behaviour-is-approved.md).
+
+**Goal.** A small team works on the same purpose-built documents, online or offline. Each copy stays the member's own file, only approved code runs, and within those two limits working together should feel effortless.
+
+When the goals conflict, ownership comes first, then trust, then flow:
+
+- **Ownership.** Every copy is the member's own file. It works on its own in a browser, years from now, and nothing removes it without the member's consent.
+- **Trust.** No shared code runs unless a maintainer approved it, and the team server alone cannot change that.
+- **Flow.** Within those limits, syncing and merging go unnoticed: rows simply arrive.
+
+**Audience.** A small team whose members know and trust each other, on a team server the team controls. Strangers never get in. One person with several devices is a team of one.
+
+### User story: the team's hours sheet
+
+1. **Setup.** Felix runs the team server and is its Root maintainer. He defines the access types *Invoice* and *Hours*, and invites Anna, Ben, Carla and Max; each one's host registers a device key.
+2. **Create and share.** Anna asks Claude for an hours sheet. It carries a document id, the published kit and modules, and rows with stable ids. She chooses Share to team and confirms the suggested access type *Hours*. Its history moves to the server; her file is pristine again.
+3. **Get a copy.** Ben opens the document URL from the team chat; his host places a copy under his team root. Dora from accounting has no host: the same URL shows her a read-only view in her browser.
+4. **Offline.** Ben adds rows on the train; his file carries the unsynced history. Anna adds hers at the office. At home Ben's host is running with the sheet closed, and his rows go up. Anna's clean sheet reloads with "Ben added 3 rows". One of Ben's saves has the note "corrected week 41".
+5. **Behaviour change.** Carla wants weekly totals. In a workbench, Claude develops them through the agent connector on a private copy of the data. Carla clicks Propose; Anna, a maintainer, reviews the diff and approves, which signs it. Every host checks the signature and installs the new behaviour: "Updated by Carla, approved by Anna". Ben's old script kept the field it did not know.
+6. **History.** At month's end Anna scrubs back to 1 October and sees the sheet through the behaviour of that time, finds who changed row 7, and restores Ben's deleted rows as a new save.
+7. **Leaving.** Max leaves the team. His host reports the removed access; he declines the Trash and keeps a revoked copy, cut off from the document's future history. Later Anna's laptop is stolen: Felix removes that device key and re-approves the behaviour versions it signed, in one batch.
+
+### Architecture
+
+```text
+┌─ Copy (file on disk) ──────────────────────────────────────────┐
+│ frame: document id · document type · kit · modules             │
+│        text-field declaration                                  │
+│ sections: style · data (JSON snapshot) · script                │
+│ unsynced history (what the team server does not have yet)      │
+└────────────────────────────────────────────────────────────────┘
+        ▲ writes data, unsynced history and approved versions only
+┌─ Host ─────────────────────────────────────────────────────────┐
+│ renderer per document: sandboxed, no network (unchanged)       │
+│ UI: workspace · Library (This computer, Team) · workbench      │
+│ main process:                                                  │
+│   copy registry (document id → path) · member settings file    │
+│   merge engine (snapshot diff → changes; text per character)   │
+│   history cache (synced history per id) · version store        │
+│   approval check (current maintainers' device keys)            │
+│   agent connector (MCP, local, workbench only)                 │
+│   sync client ──────────────────────────────┐                  │
+└─────────────────────────────────────────────┼──────────────────┘
+                                              ▼
+┌─ Team server ──────────────────────────────────────────────────┐
+│ accounts, sign-in, device keys · members, roles, access types  │
+│ role-change history · team folders · document URLs             │
+│ history store (copies without modules) · role check per change │
+│ behaviour proposals · read-only web view (own sandboxed origin)│
+└────────────────────────────────────────────────────────────────┘
+```
+
+The rules that tie it together: data merges, behaviour is approved; the team server checks roles, every host checks approvals; a file always works on its own; nothing is removed without consent.
+
+### Decisions
+
+#### Documents and copies
+
+- A document has a **document id** in its frame. Files with the same id are copies of one document, possibly at different points of its history; copies merge whenever they meet. A copy is never a new document.
+- When the host sees a second copy of a document on the same machine at a different point of its history (typically duplicated in Finder), it asks once: Same document / New document. **New document from this…** gives a copy a new id and no history.
+- A document is shared with at most one team. Another team gets a new document made from it.
+
+#### History
+
+- One history per document: data saves merge; behaviour versions (with their approvals), kit updates and module updates are whole versions that replace each other.
+- A copy's file carries exactly the **unsynced history**: all of it before the first share, nothing right after a confirmed sync, the offline tail in between ([ADR 0002](docs/adr/0002-file-carries-only-unsynced-history.md)). The host trims it only after the team server confirms it stored the changes, and caches the synced history keyed by document id.
+- Every save reaches the team as soon as the host is online. **Save with note…** (⇧⌘S) adds an optional **save note**. Drafts, branches that merge back later, are the next step after the first collaborative version.
+- The history panel lists saves (author, time, note), shows who changed a field, and restores an earlier state as a new save; nothing is ever rewound. A slider shows any past moment read-only, through the behaviour of that time if its approval is still valid, otherwise through today's behaviour with a notice.
+
+#### Sync and merging
+
+- Sync runs in the host's main process. Documents never get network access; collaboration is not a privilege.
+- While it runs, the host syncs every copy it knows about (copy registry: document id → path), open or closed, in both directions.
+- The host compares each saved snapshot with the last one and turns the difference into changes. Strings merge as whole values, except fields the document declares as text, which merge per character. A finer change API (`doc.change(…)`) follows in Host API v2.
+- Incoming changes: a clean document reloads with the merged data and a banner ("Anna added 2 rows"); a dirty one shows "Anna's changes are waiting · Merge now" and merges at the next save. Host API v2 pushes the merged data and the changes as patches through the kit, so the script updates in place (CodeMirror keeps the cursor).
+
+#### Placement and the Library
+
+- Per team, the host asks once for a team root (default `~/Documents/EverythingApp/<Team>/`). New copies land there, mirroring the team folders; afterwards the member moves and renames them freely. Team folders are administrative only.
+- A copy that is missing at start is searched for by id in its team root; otherwise the Library shows it as moved or deleted, with Locate… and Forget this copy.
+- The **Library** has two tabs: **This computer** (every known copy, arranged in member-defined groups, with badges for missing, unsynced, revoked and updates) and **Team** (the team folders, with Get a copy). The document list keeps showing only the open documents.
+- Member settings (groups, team connections, trust decisions) live in one file in the host's data folder, keyed by document id, so they can later become a synced personal document.
+- A **document URL** opens the document in the host. In a browser it shows a read-only view, served from its own sandboxed origin, with Open in EverythingApp and Download copy (the full file, modules included).
+
+#### Behaviour and trust ([ADR 0004](docs/adr/0004-data-merges-behaviour-is-approved.md))
+
+- Data merges; behaviour is approved. A maintainer's own behaviour change counts as approved; anyone else's is a **behaviour proposal** that runs only in their own copy until a maintainer approves it.
+- The team server checks every change against the member's role. Every host checks the approval (a maintainer's signature over the behaviour) against the current maintainers' device keys before it runs shared behaviour.
+- An approval counts only while its signer is a maintainer and the device key is registered. When a maintainer leaves or a key is removed, its approvals end; copies keep the behaviour they already run, and the remaining maintainers re-approve in one batch.
+- The host installs approved behaviour versions and never creates or changes behaviour itself.
+- Behaviour is developed in a **workbench** through the **agent connector** (see the open questions "Where generation happens" and "Agent connector").
+- A script keeps every data field it does not know and writes it back unchanged.
+
+#### Modules ([ADR 0003](docs/adr/0003-modules-published-with-the-kit.md))
+
+- Third-party scripts such as CodeMirror are curated **modules**, published with the kit and pinned by hash like the kit. They can grow into a whole toolbox that behaviours build on.
+- The team server stores and syncs copies without modules; the host inserts the modules whenever it writes a file to disk, and Download copy delivers the full file. Every file on any disk works in a browser. Module updates are offered like kit updates.
+
+#### Access
+
+- Roles: **Reader** (opens, gets copies, sees the history; changes do not sync), **Editor** (also changes data and may propose behaviour), **Maintainer** (also approves behaviour).
+- A member holds roles on a document directly, through its **access type**, and through Root. Roles only add up; the highest one counts; there are no exclusions.
+- Access types (Invoice, Contract; Root for all documents, None for documents given no type) are defined by the team. The team server suggests one from the document type through a mapping the team keeps, and the sharing member confirms or picks one. Changing it later needs Maintainer on the old and the new type. The document type never decides access.
+- Root maintainers manage the team: members, access types and team roles. Every role change is kept in the team's history, visible to all members.
+- A member joins through an invitation, gets one account on the team server and one device key per device. Sign-in is the team server's concern (invitation and passkey first, organisation sign-on later); device keys are the host's.
+- When access is revoked, the host reports it. **Accept** moves the copy to the Trash; declining keeps it as a **revoked copy**, cut off from the document's future history. The team is not notified. If access returns, syncing resumes. A downgrade (Editor → Reader) only shows a banner. The team server judges changes when they arrive: changes rejected after a revocation stay in the member's file.
+- **Hard rule:** the host never deletes or removes a copy without the member's consent, whatever the team server says.
+
+#### Views
+
+- A view is part of the behaviour and shows only its own document's data ("Edit", "Monthly report"); adding one is a behaviour change. Views over other documents need the M4 privilege "reading another document's data".
+
+### Not in the first collaborative version
+
+1. Strangers or public links: only members.
+2. Live co-typing with remote cursors (comes with Host API v2).
+3. Drafts (the next step).
+4. Views across documents (an M4 privilege).
+5. Agents editing data (later, separately enabled).
+6. Sync while the host is not running.
+7. Synced personal settings (designed for).
+8. Exclusions in roles.
+9. Peer-to-peer sync: hosts sync only through a team server.
+10. End-to-end encryption: the team server can read the documents it keeps, because it builds their read-only browser views.
+11. A document shared with more than one team.
+
+### Format groundwork
+
+The document specification release after M3, written into `docs/document-spec.md` when that milestone starts:
+
+- A **document id** frame field.
+- **Module slots** in the frame, checked by hash like the kit; CodeMirror as the first module.
+- A declaration of the **text fields** that merge per character, with instructions for generators on how to design collaborative text (blocks with ids, CodeMirror for longer text).
+- **Designing data for merging**, rules for generators:
+  1. Every item in a list has a stable `id`, created once and never reused.
+  2. Where order does not matter, use a map keyed by id instead of an array.
+  3. Where order matters, store it in a field (a sort key), not in the array position.
+  4. Store nothing derived: totals, counts and sums are computed by the script.
+  5. No counters as plain numbers: record entries and let the script count them.
+  6. One fact in one place.
+  7. Split long text into items (paragraphs, a note per row), so edits to different items merge.
+  8. Keep every field the script does not know, and write it back unchanged.
+
+### Technical tests before the format is fixed
+
+- Whether Automerge can record new changes on top of a snapshot without the full history (the case of a pristine file opened with no cache and no connection). Fallback: record such offline edits as data changes and convert them once the history is available.
+- Character-level merging of text from snapshot diffs.
+- Merge quality of snapshot comparison on lists with stable ids (insert, delete, reorder).
+- The size of a minimal CodeMirror 6 bundle as a module.
 
 ## Platform choice
 
@@ -309,13 +466,13 @@ The idea has a solid lineage; TiddlyWiki with TiddlyDesktop is the closest worki
 
 ## Open questions
 
-- [ ] **Where generation happens.** v0.1: generation and behaviour improvement happen outside the host (e.g. Claude Code editing the file). Still open: should a later host offer "New document from description…" / "Improve this document…" and call Claude itself?
+- [x] **Where generation happens.** Resolved (2026-10-10): on the user's computer, by an agent (such as Claude) that works through the host's agent connector in a **workbench**: the draft behaviour runs on a private copy of the data that never syncs, and the agent can edit, reload, read console output and run tests there. The host does not call Claude itself. A person ends the work with Apply (unshared document), Propose or Approve and publish (shared document). Delivered by the "Workbench and agent connector" milestone; see [Collaboration](#collaboration).
 - [ ] **Skill scope.** Should the skill only generate documents, or also inspect and repair documents that fail the conformance check (the host's copyable report is its natural input)? Note: the skill should target the API version of the user's installed host, so newer-API refusals stay rare.
 - [x] **File extension.** Resolved: any extension; a file is a document by content (the `ev-host-api` meta tag). `<name>.ev.html` is a recommended convention. The host is an opt-in handler for `.html` and passes non-documents to the default browser.
 - [x] **Self-modifying documents.** Resolved: never. A document cannot write its own behaviour through the Host API, in any API version. Behaviour changes come only from outside the document: an agent or the skill editing the file, or the host's own kit and template updates.
-- [ ] **Privileges requested by a document** *(target: M4, start of v0.2)*. A document has no privileges unless the user grants them. Design questions: where a request is declared (statically in the document, or at runtime); what a grant is bound to (path, document type, or a hash of the behaviour; an agent that rewrites the behaviour must not inherit a grant); where grants are stored and how the user revokes them (needs host UI, so after M2); how the browser fallback differs. First candidate privileges: drag-and-drop import into a document (in M1, dropped files and folders do not reach a document, except through the `document.open()` limit in the security model), network to one fixed origin, direct host-to-host connection (shared editing). Already possible without a privilege, because the user controls them: importing through a file picker (`<input type="file">`) and paste. Requirement for M4: the host handles file drops outside the page, before the document's renderer sees them, so that a document cannot remove the guard (the `document.open()` limit of M1).
-- [ ] **Agent connector.** A later host may expose an MCP server or connector so agents can edit an open document live through the host instead of on disk (the host would apply the edit, keep a version and reload the view, avoiding external-change conflicts). This is an agent-facing channel of the host, not part of the Host API documents see, so it does not conflict with the rule above. Scope, permissions and confirmation model to be defined.
-- [ ] **Trust indicator** *(team use)*. Deferred until documents travel between people. Likely first step: show the OS origin flag (macOS quarantine, Windows Mark-of-the-Web) as a banner on first open; document signatures later.
+- [ ] **Privileges requested by a document** *(target: M4, start of v0.2)*. A document has no privileges unless the user grants them. Design questions: where a request is declared (statically in the document, or at runtime); what a grant is bound to (path, document type, or a hash of the behaviour; an agent that rewrites the behaviour must not inherit a grant); where grants are stored and how the user revokes them (needs host UI, so after M2); how the browser fallback differs. First candidate privileges: drag-and-drop import into a document (in M1, dropped files and folders do not reach a document, except through the `document.open()` limit in the security model), network to one fixed origin, reading another document's data (views and dashboards across documents; decided 2026-10-10 as the path for cross-document views). Shared editing is not a privilege: sync runs in the host, and documents never get network access for it. Already possible without a privilege, because the user controls them: importing through a file picker (`<input type="file">`) and paste. Requirement for M4: the host handles file drops outside the page, before the document's renderer sees them, so that a document cannot remove the guard (the `document.open()` limit of M1).
+- [x] **Agent connector.** Resolved (2026-10-10): the host exposes a local MCP connector, an agent-facing channel that is not part of the Host API documents see. First scope: workbenches only. An agent reads the behaviour and the private data snapshot, writes the draft behaviour, reloads, reads console output and runs tests; it never reads or changes a copy, never saves, and never proposes, approves or applies (only a person clicks those). The workbench offers "Use sample data" for confidential documents, because the agent's provider sees what the agent reads. Still open, as a later, separately enabled feature: agents editing the data of real copies (attribution "Carla (via Claude)" in the history, undoing all of an agent's edits, confirmation per session).
+- [ ] **Trust indicator.** For team documents, decided (2026-10-10): approvals, that is maintainer signatures that every host checks before running shared behaviour (see [Collaboration](#collaboration)). Still open for files that arrive from outside a team: show the OS origin flag (macOS quarantine, Windows Mark-of-the-Web) as a banner on first open.
 - [x] **Concurrent edits.** Resolved: watch the file, react per section (see Host behaviour, step 6). Later: stash local data, show a diff, suggest a merge.
 - [x] **Update manifest.** Resolved: GitHub Releases with `electron-updater` (electron-builder); CI builds, signs, notarises and uploads, the host reads `latest.yml` / `latest-mac.yml`. The releases must be publicly readable (public repo or a separate public releases repo). Still open: who owns the signing certificates and the release account (personal or ZHdK).
 - [x] **Backups.** Resolved: central version store in the app data folder, keyed by path; no sibling files (safe in Git repos, shared and synced folders).
@@ -328,6 +485,9 @@ Facts established during the design review. Carry them over when this spec is sp
 | Fact | Explains | Destination |
 | --- | --- | --- |
 | On macOS, Electron's auto-update (Squirrel.Mac) only works for signed and notarised apps. | Signed installers in M3 | `docs/architecture/distribution.md` (when M3 starts) |
+| The host identifies a document by its real file path: the registry looks documents up by path (`open.js`), and the version store names its folders after a hash of the absolute path (`write.js`). Collaboration changes this to "identified by document id, found at a path". | Copy registry, history cache and member settings keyed by document id | Architecture document (when the format groundwork starts) |
+| Host API v1 is pull-only: the host asks for the whole data as a JSON snapshot on save (`preload.js`) and never pushes data into a document. | Snapshot comparison for merging; push of merged data and patches in Host API v2 | Architecture document (when the format groundwork starts) |
+| On an outside change the host reloads a clean document and shows a banner on a dirty one (`document.js`, external-change handling). Collaboration reuses this path, with an automatic merge in place of the "Keep mine / Take the version on disk" choice. | Incoming changes while a document is open | Architecture document (when collaboration starts) |
 
 Carried over: the CRLF and `beforeunload` facts now live in [docs/document-spec.md](docs/document-spec.md) (rules 4 and 5).
 
