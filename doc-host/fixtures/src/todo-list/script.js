@@ -1,11 +1,14 @@
 // To-do list: one entry per item, ticked off when done.
-// Data shape: {"items":[{"text":"","done":false}]}
+// Data shape: {"items":{"<id>":{"text":"","done":false,"order":"<sort key>"}}}
+// Items live under ids from EvKit.newId(); "order" is a sort key from
+// EvKit.orderBetween, so new items go to the end of the list.
 (function () {
   'use strict';
 
   const doc = EvKit.init();
   const data = doc.data;
-  data.items = Array.isArray(data.items) ? data.items : [];
+  const isMap = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
+  data.items = isMap(data.items) ? data.items : {};
 
   // The Save button and status are marked data-ev-fallback: the kit hides them in the host
   // and wires them in a browser.
@@ -30,9 +33,10 @@
   const $ = (id) => document.getElementById(id);
 
   function showCount() {
-    const open = data.items.filter((item) => !item.done).length;
-    $('empty').hidden = data.items.length > 0;
-    $('count').textContent = data.items.length ? `${open} of ${data.items.length} open` : '';
+    const items = Object.values(data.items);
+    const open = items.filter((item) => !item.done).length;
+    $('empty').hidden = items.length > 0;
+    $('count').textContent = items.length ? `${open} of ${items.length} open` : '';
   }
 
   function update() {
@@ -40,7 +44,7 @@
     doc.changed();
   }
 
-  function makeItem(item) {
+  function makeItem(id, item) {
     const li = document.createElement('li');
     const box = document.createElement('input');
     box.type = 'checkbox';
@@ -58,7 +62,7 @@
     del.title = 'Delete item';
     del.setAttribute('aria-label', 'Delete item');
     del.addEventListener('click', () => {
-      data.items.splice(data.items.indexOf(item), 1);
+      delete data.items[id];
       li.remove();
       update();
     });
@@ -72,13 +76,15 @@
     event.preventDefault();
     const value = $('text').value.trim();
     if (!value) return;
-    const item = { text: value, done: false };
-    data.items.push(item);
-    $('items').append(makeItem(item));
+    const last = EvKit.ordered(data.items).at(-1);
+    const item = { text: value, done: false, order: EvKit.orderBetween(last ? last[1].order : null, null) };
+    const id = EvKit.newId();
+    data.items[id] = item;
+    $('items').append(makeItem(id, item));
     $('text').value = '';
     update();
   });
 
-  data.items.forEach((item) => $('items').append(makeItem(item)));
+  EvKit.ordered(data.items).forEach(([id, item]) => $('items').append(makeItem(id, item)));
   showCount();
 })();

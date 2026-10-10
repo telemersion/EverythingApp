@@ -1,5 +1,9 @@
 'use strict';
 
+// outdated-kit.ev.html uses the test-only kit 1.9.0 (assemble runs as a child
+// process and inherits this).
+process.env.EV_TEST_KITS = '1';
+
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -26,11 +30,17 @@ for (const name of documents) {
   });
 }
 
-test('outdated-kit.ev.html is pinned to kit 1.0.0, every other fixture uses the current kit', () => {
+test('every fixture has an empty document id and the current kit, except outdated-kit.ev.html on kit 1.9.0', () => {
   for (const name of documents) {
     const { parts } = checkDocument(fs.readFileSync(path.join(FIXTURES, name), 'utf8'));
-    assert.equal(parts.kitVersion, name === 'outdated-kit.ev.html' ? '1.0.0' : currentKit().version, name);
+    assert.equal(parts.docId, '', name);
+    assert.equal(parts.kitVersion, name === 'outdated-kit.ev.html' ? '1.9.0' : currentKit().version, name);
   }
+});
+
+test('the hours sheet declares its notes as text fields', () => {
+  const { manifest } = checkDocument(fs.readFileSync(path.join(FIXTURES, 'hours-sheet.ev.html'), 'utf8'));
+  assert.deepEqual(manifest, { textFields: ['rows.*.note'] });
 });
 
 function loadFixture(name, host) {
@@ -52,7 +62,10 @@ test('hours sheet in the host: Save button and status hidden, rows reach the hos
   assert.equal(display(document, document.querySelector('[data-ev-fallback="status"]')), 'none');
   document.getElementById('add').click();
   assert.equal(host.dirty, 1);
-  assert.equal(JSON.parse(host.handler()).rows.length, 1);
+  const rows = JSON.parse(host.handler()).rows;
+  assert.equal(Object.keys(rows).length, 1);
+  assert.match(Object.keys(rows)[0], /^[0-9a-f]{16}$/);
+  assert.ok(!('id' in Object.values(rows)[0]), 'the id is the key only');
 });
 
 test('hours sheet in a browser: own Save button and status line', () => {
@@ -70,7 +83,11 @@ test('to-do list in the host: Save button and status hidden, items reach the hos
   document.getElementById('text').value = 'Buy milk';
   document.getElementById('add').click();
   assert.equal(host.dirty, 1);
-  assert.deepEqual(JSON.parse(host.handler()).items, [{ text: 'Buy milk', done: false }]);
+  const items = Object.values(JSON.parse(host.handler()).items);
+  assert.equal(items.length, 1);
+  assert.equal(items[0].text, 'Buy milk');
+  assert.equal(items[0].done, false);
+  assert.match(items[0].order, /^[0-9A-Za-z]*[1-9A-Za-z]$/);
 });
 
 test('to-do list in a browser: own Save button and status line', () => {

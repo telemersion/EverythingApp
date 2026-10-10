@@ -1,11 +1,15 @@
 // Hours sheet: one row per work session.
-// Data shape: {"rows":[{"date":"YYYY-MM-DD","person":"","task":"","hours":0,"note":""}]}
+// Data shape: {"rows":{"<id>":{"date":"YYYY-MM-DD","person":"","task":"","hours":0,"note":""}}}
+// Rows live under ids from EvKit.newId(). The order on screen is a view (by
+// date when the sheet opens or "Sort by date" is pressed) and is not stored.
 (function () {
   'use strict';
 
   const doc = EvKit.init();
   const data = doc.data;
-  data.rows = Array.isArray(data.rows) ? data.rows : [];
+  const isMap = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
+  data.rows = isMap(data.rows) ? data.rows : {};
+  let view = []; // [id, row] pairs in the order shown
 
   const todayStr = () => {
     const d = new Date();
@@ -82,7 +86,7 @@
   const fmt = (n) => (Math.round(n * 100) / 100).toLocaleString('en-US', { maximumFractionDigits: 2 });
 
   function unique(field) {
-    return [...new Set(data.rows.map(r => (r[field] || '').trim()).filter(Boolean))]
+    return [...new Set(Object.values(data.rows).map(r => (r[field] || '').trim()).filter(Boolean))]
       .sort((a, b) => a.localeCompare(b));
   }
 
@@ -115,7 +119,7 @@
     const byPerson = new Map();
     const trs = tbody.children;
     for (let i = 0; i < trs.length; i++) {
-      const r = data.rows[i];
+      const r = view[i][1];
       const vis = isVisible(r);
       trs[i].hidden = !vis;
       if (vis) {
@@ -128,7 +132,7 @@
     }
     $('total').textContent = fmt(total);
     $('count').textContent = shown + (shown === 1 ? ' entry' : ' entries');
-    $('empty').hidden = data.rows.length > 0;
+    $('empty').hidden = view.length > 0;
 
     const box = $('people');
     box.innerHTML = '';
@@ -165,7 +169,7 @@
     return i;
   }
 
-  function makeRow(row) {
+  function makeRow(id, row) {
     const tr = document.createElement('tr');
     tr.append(
       cell('', field(row, 'date', 'date')),
@@ -181,9 +185,10 @@
     b.title = 'Delete row';
     b.setAttribute('aria-label', 'Delete row');
     b.addEventListener('click', () => {
-      const idx = data.rows.indexOf(row);
+      const idx = view.findIndex(([vid]) => vid === id);
       if (idx < 0) return;
-      data.rows.splice(idx, 1);
+      view.splice(idx, 1);
+      delete data.rows[id];
       tr.remove();
       doc.changed();
       refreshLists();
@@ -194,23 +199,32 @@
     return tr;
   }
 
+  // Sorting is a view: it changes what is shown, never the data.
+  function byDate() {
+    return Object.entries(data.rows)
+      .sort((a, b) => (a[1].date || '').localeCompare(b[1].date || '') || (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
+  }
+
   function renderAll() {
+    view = byDate();
     tbody.innerHTML = '';
-    data.rows.forEach(r => tbody.append(makeRow(r)));
+    view.forEach(([id, r]) => tbody.append(makeRow(id, r)));
     refreshLists();
     applyFilterAndTotals();
   }
 
   $('add').addEventListener('click', () => {
-    const last = data.rows[data.rows.length - 1];
+    const last = view.length ? view[view.length - 1][1] : null;
     const row = {
       date: $('fMonth').value ? ($('fMonth').value + '-01') : todayStr(),
       person: $('fPerson').value || (last ? last.person : '') || '',
       task: '', hours: 0, note: ''
     };
     if ($('fMonth').value && todayStr().startsWith($('fMonth').value)) row.date = todayStr();
-    data.rows.push(row);
-    const tr = makeRow(row);
+    const id = EvKit.newId();
+    data.rows[id] = row;
+    view.push([id, row]);
+    const tr = makeRow(id, row);
     tbody.append(tr);
     doc.changed();
     applyFilterAndTotals();
@@ -218,11 +232,7 @@
     target.focus();
   });
 
-  $('sort').addEventListener('click', () => {
-    data.rows.sort((a, b) => (a.date || '').localeCompare(b.date || ''));
-    doc.changed();
-    renderAll();
-  });
+  $('sort').addEventListener('click', renderAll);
 
   $('fPerson').addEventListener('change', applyFilterAndTotals);
   $('fMonth').addEventListener('input', applyFilterAndTotals);
