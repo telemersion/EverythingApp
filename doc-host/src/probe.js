@@ -18,15 +18,29 @@ function isolateUserData() {
   process.on('exit', () => fs.rmSync(dir, { recursive: true, force: true }));
 }
 
-// doc: the Document the probe runs in (the first one opened).
-function attachProbe(doc) {
+// doc: the Document the probe runs in (the first one opened). mainChecks:
+// a promise of the main process's own probe lines (resolver-rules.js),
+// printed once the document reports "done". SKIP lines do not fail the run.
+function attachProbe(doc, { mainChecks = Promise.resolve([]) } = {}) {
   let failed = false;
-  doc.view.webContents.on('console-message', (event) => {
+  const print = (line) => {
+    console.log(line);
+    if (line.includes('FAIL')) failed = true;
+  };
+  doc.view.webContents.on('console-message', async (event) => {
     const { message } = event;
     if (!message || !message.startsWith('[probe]')) return;
+    if (message !== '[probe] done') {
+      print(message);
+      return;
+    }
+    try {
+      for (const line of await mainChecks) print(line);
+    } catch (err) {
+      print(`[probe] FAIL main-process checks (${err.message})`);
+    }
     console.log(message);
-    if (message.includes('FAIL')) failed = true;
-    if (message === '[probe] done') app.exit(failed ? 1 : 0);
+    app.exit(failed ? 1 : 0);
   });
   setTimeout(() => {
     console.log('[probe] FAIL timeout: the probe did not finish');

@@ -1,18 +1,19 @@
 'use strict';
 
 const path = require('node:path');
-const { app, Menu } = require('electron');
+const { app, Menu, session } = require('electron');
 const { registerSchemePrivileges } = require('./protocol');
 const { registerIpc } = require('./ipc');
 const { Workspace } = require('./workspace');
 const { buildMenu } = require('./menu');
 const { pathsFromArgv } = require('./argv');
 const { isolateUserData, attachProbe } = require('./probe');
+const { hostResolverRules, mainProbeChecks } = require('./resolver-rules');
 
 app.setName('EverythingApp');
-// No DNS at all: M1 needs none, and documents could leak data through DNS
-// names (dns-prefetch). M3 adds "EXCLUDE <update host>" for the update check.
-app.commandLine.appendSwitch('host-resolver-rules', 'MAP * ~NOTFOUND');
+// No names resolve but the update hosts: documents could leak data through
+// DNS names (dns-prefetch). See resolver-rules.js.
+app.commandLine.appendSwitch('host-resolver-rules', hostResolverRules());
 registerSchemePrivileges();
 if (process.env.EV_PROBE) isolateUserData();
 
@@ -30,7 +31,12 @@ if (!app.requestSingleInstanceLock()) {
     const doc = await workspace.open(p);
     if (doc && process.env.EV_PROBE && !probeAttached) {
       probeAttached = true;
-      attachProbe(doc);
+      attachProbe(doc, {
+        mainChecks: mainProbeChecks({
+          resolveHost: (name) => session.defaultSession.resolveHost(name),
+          expectNetwork: process.env.EV_PROBE_NETWORK === '1',
+        }),
+      });
     }
   }
 
