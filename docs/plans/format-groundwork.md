@@ -242,6 +242,15 @@ doc-host/
 
 ## Acceptance results (filled in by Task 9)
 
+Recorded 2026-10-10 on macOS 26 (arm64), from source.
+
+1. **Unit tests:** 357/357 pass (`npm test`), including the frame, manifest, module, kit 2.0.0 (fallback id, `module`, `newId`, `orderBetween` with 1,000 inserts, `ordered`), write (id written once, never replaced, kit writes, `meta.json`) and fixture tests.
+2. **Smoke test:** passes (`npm run smoke`). New steps: the first save writes the id and nothing else outside the data; the host's own id write causes no reload and no "Updated from disk" (this step found a needless reload, fixed in `Document#save`); later saves keep the id; a reload before the first save keeps the id assigned on open; the kit update 1.9.0 → 2.0.0 also writes the id; a document with `codemirror` 1.0.0 renders an editable editor under the document CSP with no violation.
+3. **Probe:** 25 PASS, exit 0 (`npm run probe`).
+4. **Specification check:** the frame text and the module line in document-spec section 2 equal `buildDocument` output byte for byte.
+5. **Manual check (Task 9, Step 2):** open.
+6. **Release 0.2.0 (Task 9, Step 3):** open.
+
 ## Spike results
 
 Recorded 2026-10-10 on macOS 26 (arm64), Node 25.9, `@automerge/automerge` 3.5.0, CodeMirror (`@codemirror/state` 6.7.6, `view` 6.43.14, `commands` 6.11.1, `lang-markdown` 6.5.2), esbuild 0.28, Electron 44.5.1 (doc-host's). The scripts were throwaway, in the session scratchpad outside the repository. Their core was a snapshot-diff module: it turns a before/after pair of JSON snapshots into Automerge operations (objects per key; arrays whose items have an `id` matched by id with an LCS, everything else delete + insert; other arrays by value; strings whole, as `ImmutableString`, except declared text fields).

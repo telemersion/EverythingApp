@@ -273,7 +273,8 @@ The reliable way is to write the sections separately and assemble them, which in
 doc-host/fixtures/src/<name>/
   meta.json      {"lang":"en","title":"…","docType":"…","docTypeVersion":"1.0"}
                  (optional "modules": ["codemirror"]; optional "kitVersion" pins
-                 an older published kit, for tests only)
+                 an older kit, for tests only: the test kit 1.9.0 needs
+                 EV_TEST_KITS=1)
   style.css
   manifest.json  {} or {"textFields":[…]}
   script.js

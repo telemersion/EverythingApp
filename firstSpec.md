@@ -38,7 +38,7 @@ Acceptance criteria:
 - [x] The document renders exactly as it does in Chrome. *(M1, 2026-10-06: hours sheet captured at 1100×768 @2x in headless Chrome and the host; identical layout and computed colours, apart from the Save button, status line and save hint, which the document shows only in the browser. The host capture is tagged with the display profile; converted to sRGB it matches Chrome to the pixel except text anti-aliasing.)*
 - [x] Ctrl/Cmd+S and File → Save write the current data into the opened file. No dialog appears. The document shows no Save button of its own while running in the host. *(M1, 2026-10-07: manual check — Cmd+S and File → Save wrote without a dialog, the dirty marker cleared, only the data block changed on disk; no Save button in the host.)*
 - [x] After saving, reopening the file shows the new rows.
-- [x] Saving changes only the data block on disk. All other bytes of the file stay identical.
+- [x] Saving changes only the data block on disk. All other bytes of the file stay identical. *(From 0.2.0, the first save of a new document also writes its document id.)*
 - [x] Closing a document with unsaved changes asks: Save, Don't save, Cancel. *(M1, 2026-10-07: manual check — Cancel kept the window, Don't save closed without writing, Save wrote and closed.)*
 - [x] A failed write leaves the original file intact and shows an error.
 - [x] Any document that conforms to the specification works in the host without host changes; the hours sheet is only the first fixture.
