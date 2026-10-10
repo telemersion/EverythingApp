@@ -88,7 +88,7 @@ Not in M3: Windows code signing, update channels, delta updates beyond electron-
 
 After M3 the order is (decided 2026-10-10; milestone numbers are assigned when each one is planned):
 
-1. **Format groundwork**: a kit and document specification release that makes every document generated from then on ready for collaboration: document id, module slots, declared text fields, data design rules. See [Collaboration](#collaboration), "Format groundwork".
+1. **Format groundwork**: a kit and document specification release that makes every document generated from then on ready for collaboration: document id, module slots, declared text fields, data design rules. See [Collaboration](#collaboration), "Format groundwork"; designed on 2026-10-10, released as 0.2.0, plan in [docs/plans/format-groundwork.md](docs/plans/format-groundwork.md).
 2. **Workbench and agent connector** (single user): behaviour is developed in a workbench through a local agent connector. Answers the open question "Where generation happens".
 3. **M4 · Privileges** (not part of the single-user host): documents can request privileges beyond the sandbox, and the user can grant them. See the open question "Privileges requested by a document".
 4. **Collaboration**, in several milestones: team server and sync; roles and approvals; Library and history.
@@ -109,7 +109,7 @@ Non-goals for the single-user host, besides the skill that generates documents (
 
 Every document, hand-written or generated, must satisfy this specification; it is the contract between the host and whatever produces documents, and v1 lives as `docs/document-spec.md`.
 
-A document is a fixed **frame** with exactly three named **sections**: style, data and script. The frame is defined by this specification and is the same for every document, apart from a few frame fields (title, language, document type). It includes the **kit**, the spec-defined script that loads the data, talks to the host and implements the fallback save. Everything a generator or agent writes goes into a section.
+A document is a fixed **frame** with exactly four named **sections**: style, manifest, data and script. The frame is defined by this specification and is the same for every document, apart from a few frame fields (title, language, document type, document id) and the modules it uses. It includes the **kit**, the spec-defined script that loads the data, talks to the host and implements the fallback save. Everything a generator or agent writes goes into a section.
 
 ```html
 <!DOCTYPE html>
@@ -118,13 +118,16 @@ A document is a fixed **frame** with exactly three named **sections**: style, da
   <meta charset="utf-8">
   <meta name="ev-host-api" content="1">
   <meta name="ev-doc-type" content="hours-sheet" data-version="1.0">
+  <meta name="ev-doc-id" content="">
   <title>Hours sheet</title>
   <style id="ev-style">/* style section */</style>
+  <script type="application/json" id="ev-manifest">{"textFields":["rows.*.note"]}</script>
 </head>
 <body>
   <div id="ev-app"></div>
-  <script type="application/json" id="ev-data">{"rows":[]}</script>
+  <script type="application/json" id="ev-data">{"rows":{}}</script>
   <script id="ev-kit">/* kit: part of the frame, verbatim per API version */</script>
+  <script id="ev-module-codemirror">/* zero or more modules, sorted by name, verbatim */</script>
   <script id="ev-script">/* script section */</script>
 </body>
 </html>
@@ -133,15 +136,16 @@ A document is a fixed **frame** with exactly three named **sections**: style, da
 | Section | Element | Written by | Contains |
 | --- | --- | --- | --- |
 | Style | `<style id="ev-style">` | Generator / agent | All CSS |
+| Manifest | `<script type="application/json" id="ev-manifest">` | Generator / agent | What the host must know without running the document: the text fields ([ADR 0005](docs/adr/0005-manifest-section.md)) |
 | Data | `<script type="application/json" id="ev-data">` | Host (and fallback) | The data block |
 | Script | `<script id="ev-script">` | Generator / agent | All JavaScript; renders the UI into `#ev-app` |
 
 Rules:
 
 - **Namespace.** Every identifier defined by this specification starts with `ev` (`ev-` for meta names and ids, `ev` for JavaScript globals: `window.evHost`, `EvKit`). The script section must not define its own identifiers with this prefix.
-- **Frame.** Nothing outside the frame and its three sections. No additional elements, scripts, styles or comments.
+- **Frame.** Nothing outside the frame, its modules and its four sections. No additional elements, scripts, styles or comments.
 - **Kit.** `<script id="ev-kit" data-kit-version="1.0.0">` is part of the frame. Every published kit version has a fixed text, and the host checks the kit against the hashes of all published kits for the document's `ev-host-api` version; unknown or modified kits are rejected. The script section uses it (`EvKit.init(...)`) and never reimplements loading, host wiring or saving.
-- **Sections.** Exactly one of each section, identified by its id. Behaviour lives only in the style and script sections; data lives only in the data section.
+- **Sections.** Exactly one of each section, identified by its id. Behaviour lives only in the style, manifest and script sections; data lives only in the data section.
 
 - **Data block.** The data section's content is valid JSON with every `<` written as `\u003c`, so data can never close the script tag.
 - **Runtime UI.** All UI is rendered by the script section into `#ev-app` at load time. `#ev-app` is empty in the saved file.
@@ -149,7 +153,10 @@ Rules:
 - **Self-contained.** No external scripts, stylesheets, fonts or images. Assets are inlined or embedded as data URIs.
 - **API version.** `<meta name="ev-host-api">` declares the host API version the document expects.
 - **Document type.** `<meta name="ev-doc-type">` names the type and its behaviour version. Used later for template upgrades.
-- **Data shape.** Top-level JSON object. The hours sheet uses `{"rows":[{"date","person","task","hours","note"}]}` with `date` as `YYYY-MM-DD` and `hours` as a number.
+- **Data shape.** Top-level JSON object, designed for merging (see "Format groundwork" under Collaboration). The hours sheet uses `{"rows":{"<id>":{"date","person","task","hours","note"}}}` with `date` as `YYYY-MM-DD` and `hours` as a number.
+- **Document id** (from 0.2.0). `<meta name="ev-doc-id">` is empty in a new document or holds 32 lowercase hex characters. Generators leave it empty; the host assigns an id on open and writes it with the first save, the kit on the first fallback save.
+- **Manifest** (from 0.2.0). Always present (`{}` when empty), part of the behaviour, checked strictly: only the keys this specification defines.
+- **Modules** (from 0.2.0). Zero or more `<script id="ev-module-{name}" data-module-version="{version}">` between the kit and the script, sorted by name, each the exact text of a published module ([ADR 0003](docs/adr/0003-modules-published-with-the-kit.md)). The script reaches them through `EvKit.module(name, major)`.
 
 Recommendations for generators (the future skill builds on these):
 
@@ -250,7 +257,7 @@ Without a host, the document saves a new copy of itself. `hours-sheet.html` pion
 | Chrome, Edge | File System Access API (`showSaveFilePicker`, `createWritable`); handle stored in IndexedDB keyed by `location.href` | Pick the file once; later at most an "Allow editing" prompt per session |
 | Firefox, Safari | Blob + `<a download>` | New copy lands in Downloads; the user replaces the original manually |
 
-Serialisation without a host: **rebuild the file from the frame**, never from the live DOM. The fallback lives in the kit, so every document carries the same implementation. It reads the frame fields from the `<meta>` tags and `<html lang>`, takes the original text of the style and script sections (`textContent` of `#ev-style` and `#ev-script`, which the runtime never touches) and inserts the escaped JSON as the data section. The output always conforms, and a fallback save produces the same bytes as a host save.
+Serialisation without a host: **rebuild the file from the frame**, never from the live DOM. The fallback lives in the kit, so every document carries the same implementation. It reads the frame fields from the `<meta>` tags and `<html lang>`, takes the original text of the style, manifest and script sections and the modules (`textContent` of `#ev-style`, `#ev-manifest`, `#ev-script` and each `ev-module-*`, which the runtime never touches) and inserts the escaped JSON as the data section. On the first fallback save of a document with an empty document id, it fills in a new one. The output always conforms, and a fallback save produces the same bytes as a host save.
 
 Why not a DOM clone: anything the script changes at runtime (body classes, injected nodes such as datalists, a changed title) would leak into the saved file and break the frame, and DOM serialisation reformats the whole file.
 
@@ -277,13 +284,13 @@ Required settings and checks:
 - **No native dialogs (M2).** `webPreferences.disableDialogs`: `alert()` does nothing and `confirm()` returns `false`. Electron shows them as native message boxes that look like the host's own and name no document, and it offers no way to show them anywhere else, so they are turned off. Documents ask for confirmation inside their own UI.
 - **Host UI outside the document (M2).** Host messages appear only in host areas (document list, tab strips, banner rows); a document's view never overlaps them. The host-UI view only accepts its own messages (`ui:*`) and documents only theirs (`doc:*`), told apart by the sending view.
 - **Validate writes.** The host rejects `doc:save-data` with non-string input, invalid JSON and payloads over a size limit (e.g. 50 MB).
-- **Data, not code (permanent).** The Host API is data-only in every version. The host writes the data block on save and the kit on a user-confirmed kit update; it never writes the style or script section on behalf of a document. Kit text comes only from the host's own list of published kits, never from the document, so a document cannot rewrite any code through the API. From collaboration on, the host also installs module versions from its own list and behaviour versions that carry a maintainer's approval; neither ever comes from the running document.
+- **Data, not code (permanent).** The Host API is data-only in every version. The host writes the data block on save and the kit on a user-confirmed kit update; it never writes the style, manifest or script section on behalf of a document (it does write the document id, a frame field, with the first save). Kit text comes only from the host's own list of published kits, never from the document, so a document cannot rewrite any code through the API. From collaboration on, the host also installs module versions from its own list and behaviour versions that carry a maintainer's approval; neither ever comes from the running document.
 - **Origin isolation.** The random id gives each opened document its own origin, so documents cannot read each other's storage.
 - **No persistent browser storage.** Document sessions run in memory (no `persist:` partition): `localStorage`, IndexedDB and caches are empty on every open and leave no traces on disk. View state (filters, scroll position) lasts one session; whatever should survive belongs in the data block.
 
 ## Compatibility and versioning
 
-The host never breaks an old document: API versions are only ever added, and documents degrade gracefully when a feature is missing.
+The host never breaks an old document: API versions are only ever added, and documents degrade gracefully when a feature is missing. This promise starts with 0.2.0: the format groundwork amended API 1 in place (document id, manifest, modules), because no API 1 documents existed outside the test fixtures.
 
 - **API versions.** The host reads `ev-host-api` before loading. It supports every version it has ever shipped. A document asking for a newer version than the host knows is refused, like any other conformance violation: "This document needs a newer EverythingApp (API v2). Update the host, or open it in Chrome."
 - **Host releases.** Release numbers (0.1.0, 0.2.0, …) count the host's milestones and are independent of the host API version and the kit version; a host release never changes a document.
@@ -320,8 +327,8 @@ When the goals conflict, ownership comes first, then trust, then flow:
 ```text
 ┌─ Copy (file on disk) ──────────────────────────────────────────┐
 │ frame: document id · document type · kit · modules             │
-│        text-field declaration                                  │
-│ sections: style · data (JSON snapshot) · script                │
+│ sections: style · manifest (text fields) · data (JSON          │
+│           snapshot) · script                                   │
 │ unsynced history (what the team server does not have yet)      │
 └────────────────────────────────────────────────────────────────┘
         ▲ writes data, unsynced history and approved versions only
@@ -421,27 +428,31 @@ The rules that tie it together: data merges, behaviour is approved; the team ser
 
 ### Format groundwork
 
-The document specification release after M3, written into `docs/document-spec.md` when that milestone starts:
+The document specification release after M3 (0.2.0), designed on 2026-10-10 after the technical tests; plan and decisions in [docs/plans/format-groundwork.md](docs/plans/format-groundwork.md). It changes only the format: nothing records history yet. The first collaboration milestone adds the history marker and the unsynced history to the frame under a new host API version; documents made before then start their history deterministically from their data block.
 
-- A **document id** frame field.
-- **Module slots** in the frame, checked by hash like the kit; CodeMirror as the first module.
-- A declaration of the **text fields** that merge per character, with instructions for generators on how to design collaborative text (blocks with ids, CodeMirror for longer text).
-- **Designing data for merging**, rules for generators:
-  1. Every item in a list has a stable `id`, created once and never reused.
-  2. Where order does not matter, use a map keyed by id instead of an array.
-  3. Where order matters, store it in a field (a sort key), not in the array position.
-  4. Store nothing derived: totals, counts and sums are computed by the script.
+- A **document id** frame field (`ev-doc-id`, 32 lowercase hex), left empty by generators and assigned by the host on open (written with the first save) or by the kit on the first fallback save. The version store records it too.
+- **Module slots** in the frame, checked by hash like the kit; `codemirror` 1.0.0 (a minimal editor: state, view, undo history, standard keys) as the first module. The script asks the kit for a module and the major version it was written for, `EvKit.module('codemirror', 1)`. Minor and patch versions will be updated like the kit after the user confirms; a major version needs a behaviour change.
+- A **manifest** section that declares the **text fields** that merge per character (`{"textFields":["rows.*.note"]}`, `*` matching any array item or map key), with instructions for generators on how to design collaborative text (blocks with ids, CodeMirror for longer text). See [ADR 0005](docs/adr/0005-manifest-section.md).
+- **Designing data for merging**, rules for generators (the host never enforces them; it never refuses a user's data because of its shape):
+  1. Every item in a list lives under a stable id key, created once with `EvKit.newId()` and never reused. The id is the key only, not repeated inside the item.
+  2. A list of items is an object keyed by id, never an array ([ADR 0006](docs/adr/0006-lists-are-maps-keyed-by-id.md)). Arrays are for small lists of plain values that change as a whole.
+  3. Where order matters, each item has a string sort key made with `EvKit.orderBetween(a, b)`; a move changes only the moved item's key. Scripts list items with `EvKit.ordered(map)`.
+  4. Store nothing derived: totals, counts and sums are computed by the script. Sorting for display (by date, by name) is a view, not stored.
   5. No counters as plain numbers: record entries and let the script count them.
   6. One fact in one place.
-  7. Split long text into items (paragraphs, a note per row), so edits to different items merge.
+  7. Split long text into items (paragraphs, a note per row), so edits to different items merge; declare free text that people edit as a text field.
   8. Keep every field the script does not know, and write it back unchanged.
+  9. Name fields as identifiers (letters, digits, `_`), so text-field paths can name them.
+  10. Deleting an item removes its key; the history keeps what was deleted.
 
 ### Technical tests before the format is fixed
 
-- Whether Automerge can record new changes on top of a snapshot without the full history (the case of a pristine file opened with no cache and no connection). Fallback: record such offline edits as data changes and convert them once the history is available.
-- Character-level merging of text from snapshot diffs.
-- Merge quality of snapshot comparison on lists with stable ids (insert, delete, reorder).
-- The size of a minimal CodeMirror 6 bundle as a module.
+Run on 2026-10-10 as spikes; results in [docs/plans/format-groundwork.md](docs/plans/format-groundwork.md#spike-results).
+
+- Whether Automerge can record new changes on top of a snapshot without the full history (the case of a pristine file opened with no cache and no connection). **No**; the fallback works: record such offline edits as data changes and replay them with `changeAt` at the file's marker once the history is available.
+- Character-level merging of text from snapshot diffs. **Works**, with the usual text-CRDT limits; the host needs a bounded, grapheme-safe diff.
+- Merge quality of snapshot comparison on lists with stable ids (insert, delete, reorder). **Good** for insert, delete and edit; reorder needs a map keyed by id with sort keys.
+- The size of a minimal CodeMirror 6 bundle as a module. **About 270 KB** minified (89 KB gzip); runs under the document CSP.
 
 ## Platform choice
 
@@ -495,6 +506,10 @@ Facts established during the design review. Carry them over when this spec is sp
 | The host identifies a document by its real file path: the registry looks documents up by path (`open.js`), and the version store names its folders after a hash of the absolute path (`write.js`). Collaboration changes this to "identified by document id, found at a path". | Copy registry, history cache and member settings keyed by document id | Architecture document (when the format groundwork starts) |
 | Host API v1 is pull-only: the host asks for the whole data as a JSON snapshot on save (`preload.js`) and never pushes data into a document. | Snapshot comparison for merging; push of merged data and patches in Host API v2 | Architecture document (when the format groundwork starts) |
 | On an outside change the host reloads a clean document and shows a banner on a dirty one (`document.js`, external-change handling). Collaboration reuses this path, with an automatic merge in place of the "Keep mine / Take the version on disk" choice. | Incoming changes while a document is open | Architecture document (when collaboration starts) |
+| Automerge's `changeAt(doc, heads, …)` does not throw for heads the document does not know: it silently records a change without dependencies. Check `A.hasHeads(doc, heads)` first (spike 1, Automerge 3.5). | Replaying offline saves of a pristine file at its marker | Architecture document (when collaboration starts) |
+| `A.updateText` grows roughly quadratically when the strings differ a lot (49 s for 100,000 characters rewritten). diff-match-patch with a timeout is fast but splits surrogate pairs; running it over graphemes is correct and stays under 1 s (spike 2). | The merge engine's text diff, off the main thread | Architecture document (when collaboration starts) |
+| A history started with an actor derived from the document id, `time: 0`, a fixed message and sorted keys gives byte-identical first changes on every host, so copies with identical data blocks share a root (spike 5). | Starting the history of documents made before collaboration | Architecture document (when collaboration starts) |
+| A whole-list sort written into the data scatters concurrent inserts, and a move in an array loses a concurrent edit of the moved item (spike 3). | Data design rules 2–4, ADR 0006 | Architecture document (when collaboration starts) |
 
 Carried over: the CRLF and `beforeunload` facts now live in [docs/document-spec.md](docs/document-spec.md) (rules 4 and 5). The M3 facts (Squirrel.Mac and signing, resolver rules, App Translocation, default handlers, Windows code-signing keys, GitHub secrets) live in [docs/architecture/distribution.md](docs/architecture/distribution.md) and [docs/guides/releasing.md](docs/guides/releasing.md).
 

@@ -22,9 +22,11 @@
 | **Module** | A third-party script (e.g. CodeMirror) curated and published with the kit, pinned by hash like the kit, that a document's behaviour may use. | Plugin, library (that is the host's list of copies), dependency, package |
 | **Outdated kit** | A published kit that is not the newest published kit for the document's host-API version. | Old kit, stale kit |
 | **Kit update** | Replacing a document's outdated kit with the newest published kit for its host-API version, after the User confirms; the data block and the behaviour stay as they are. | Upgrade (reserved for template upgrade), migration |
-| **Section** | One of the three named parts of a document inside the frame: style, data or script. | Block (except in "data block"), part, region |
+| **Section** | One of the four named parts of a document inside the frame: style, manifest, data or script. | Block (except in "data block"), part, region |
 | **Data block** | The data section: the one embedded JSON content that holds the user's data. | Payload, state, model |
-| **Behaviour** | The style and script sections of a document together. | Code, template, UI |
+| **Manifest** | The section that declares, as JSON, what the host must know about the behaviour without running it, such as the text fields. | Schema, config, header, metadata |
+| **Text field** | A string field of the data block that the manifest declares to merge per character; every other string merges as a whole value. | Rich text, long text, CRDT field |
+| **Behaviour** | The style, manifest and script sections of a document together. | Code, template, UI |
 | **View** | One way a document's behaviour presents its data (e.g. "Edit", "Monthly report"); a document may offer several. | Tool, editor (that is the whole behaviour), lens, page |
 | **Document type** | The named kind of document (e.g. hours sheet) together with the version of its behaviour. | Template, kind |
 | **Claimed document** | A file that contains the host-API declaration (`<meta name="ev-host-api">`), whatever its name, and therefore must pass the conformance check. | Candidate, document-like file |
@@ -97,9 +99,10 @@
 
 ## Relationships
 
-- A **Document** consists of one **Frame** and exactly three **Sections**: style, data (the **Data block**) and script.
+- A **Document** consists of one **Frame** and exactly four **Sections**: style, manifest (the **Manifest**), data (the **Data block**) and script.
 - A **Document** has exactly one **Document id** and one or more **Copies**; copying a file never creates a new **Document**.
-- **Behaviour** = style section + script section; the **Frame** is not behaviour.
+- **Behaviour** = style section + manifest + script section; the **Frame** is not behaviour.
+- The **Manifest** declares the **Text fields**; the **Host** reads it without running the document, so it can merge closed **Copies** too. Changing it is a behaviour change.
 - The **Kit** belongs to the **Frame**, not to any **Section**; it is identical in every **Document** with the same **Host API** version.
 - A **View** is part of the **Behaviour** and shows only its own **Document**'s data; adding one is a behaviour change. Reading another document's data would be a **Privilege**.
 - **Modules** come with the **Kit** and follow its rules: only published, hash-pinned **Modules**; the **Behaviour** uses them but never changes them.
