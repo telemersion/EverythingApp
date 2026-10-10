@@ -32,7 +32,7 @@ if (!app.requestSingleInstanceLock()) {
   // Every open route but drops (Finder, second instance, argv) ends here:
   // the focused pane. EV_PROBE: the probe runs in the first one opened.
   async function open(p) {
-    const doc = await workspace.open(p);
+    const doc = await workspace.open(p, { source: 'os' });
     if (doc && process.env.EV_PROBE && !probeAttached) {
       probeAttached = true;
       attachProbe(doc, {

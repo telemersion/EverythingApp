@@ -1136,6 +1136,26 @@ async function run(dir) {
   await workspace.closeDocument(note.id);
   assert.equal(note.disposed, true);
 
+  step('a non-document from the system opens in the browser; a dropped one gets the sheet');
+  const plainPage = path.join(dir, 'plain-page.html');
+  await fs.writeFile(plainPage, '<!doctype html><title>Plain</title><p>Hello</p>\n');
+  const handedOff = [];
+  const realOpenInBrowser = workspace.openInBrowser;
+  workspace.openInBrowser = async (p) => { handedOff.push(p); return true; };
+  answer();
+  assert.equal(await workspace.open(plainPage, { source: 'os' }), null);
+  assert.deepEqual(handedOff, [plainPage]);
+  assert.deepEqual(sheets, [], 'no sheet');
+  answer(0);
+  assert.equal(await workspace.open(plainPage), null);
+  assert.deepEqual(handedOff, [plainPage], 'not handed off again');
+  assert.deepEqual(sheets.map((o) => o.message), ['plain-page.html is not an EverythingApp document.']);
+  workspace.openInBrowser = async () => false; // no browser found: the sheet after all
+  answer(0);
+  await workspace.open(plainPage, { source: 'os' });
+  assert.deepEqual(sheets.map((o) => o.message), ['plain-page.html is not an EverythingApp document.']);
+  workspace.openInBrowser = realOpenInBrowser;
+
   step('a downloaded host update becomes a notice; Restart Now goes through the close summary');
   // The last step: a confirmed quit disposes the workspace. The updater and
   // the app are fakes; workspace.exit goes through hostUpdates.exit as in main.js.

@@ -4,6 +4,8 @@ const crypto = require('node:crypto');
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const { app, BaseWindow, dialog, clipboard, screen } = require('electron');
+const { nonDocumentAction } = require('./open-route');
+const { openInBrowser } = require('./browser');
 const wm = require('./workspace-model');
 const { computeLayout, bannerRowHeight, neighbourPane } = require('./layout');
 const { describeStatus } = require('./status');
@@ -77,6 +79,7 @@ class Workspace {
     this.onNoticeAction = () => {}; // (kind, action) for every notice button (main.js sets it)
     this.checkForUpdates = async () => {}; // Help → Check for Updates… (main.js sets it)
     this.showLog = async () => {};        // Help → Show Log (main.js sets it)
+    this.openInBrowser = (filePath) => openInBrowser(filePath, { app }); // non-documents the system sent
     // The end of a confirmed quit; main.js replaces it so a ready update installs.
     this.exit = ({ restart = false } = {}) => {
       if (restart) app.relaunch();
@@ -153,11 +156,12 @@ class Workspace {
 
   // Opens a file as a new tab in paneId (default: the focused pane), or
   // selects its tab if it is open already. Anything that is not a conforming
-  // document gets a sheet. Never rejects.
-  async open(rawPath, { paneId } = {}) {
+  // document gets a sheet, except a non-document the operating system sent
+  // (source 'os'), which goes to the browser (open-route.js). Never rejects.
+  async open(rawPath, { paneId, source = 'user' } = {}) {
     // restore() has not finished: its model replaces any tab added now.
     if (this.restoring) {
-      this.pendingOpens.push({ rawPath, paneId });
+      this.pendingOpens.push({ rawPath, paneId, source });
       return null;
     }
     try {
@@ -168,7 +172,7 @@ class Workspace {
         return existing;
       }
       if (result.kind !== 'document') {
-        await this.refuse(result);
+        await this.refuse(result, { source });
         return null;
       }
       const doc = await this.load(result);
@@ -184,8 +188,12 @@ class Workspace {
   }
 
   // The M1 messages for files that do not open.
-  async refuse(result) {
+  async refuse(result, { source = 'user' } = {}) {
     const name = path.basename(result.filePath);
+    if (result.kind === 'not-document' && nonDocumentAction(source) === 'browser'
+      && await this.openInBrowser(result.filePath)) {
+      return;
+    }
     if (result.kind === 'error') {
       await this.sheet({ type: 'error', message: `${name} could not be opened.`, detail: result.message, buttons: ['OK'] });
     } else if (result.kind === 'not-document') {
@@ -715,7 +723,7 @@ class Workspace {
       this.applyAndFocus(this.model);
     } finally {
       // Opens that arrived during restore() open whatever happened to it.
-      for (const { rawPath, paneId } of this.pendingOpens.splice(0)) await this.open(rawPath, { paneId });
+      for (const { rawPath, paneId, source } of this.pendingOpens.splice(0)) await this.open(rawPath, { paneId, source });
     }
     return { failed };
   }
