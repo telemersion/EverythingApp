@@ -8,7 +8,8 @@ const path = require('node:path');
 // (write.js). An entry whose file is gone from a mounted volume is orphaned;
 // orphans go after ORPHAN_DAYS, and above CAP_BYTES the oldest orphans go
 // first, then the oldest versions of live documents, never a newest version.
-// Entries on a volume that is not mounted are left alone.
+// Entries on a volume that is not mounted, or whose file cannot be checked
+// (no permission, an I/O error), are left alone.
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const CAP_BYTES = 500 * 1024 * 1024;
@@ -75,6 +76,14 @@ function planCleanup(entries, { now, capBytes = CAP_BYTES, orphanDays = ORPHAN_D
 
 const exists = (p) => fs.access(p).then(() => true, () => false);
 
+// 'exists', 'missing' (ENOENT, ENOTDIR: the path really is gone) or
+// 'unknown' (any other error: no permission, an I/O error on a network
+// volume). Only a file that is really gone may become an orphan.
+const fileState = (p) => fs.access(p).then(
+  () => 'exists',
+  (err) => (err.code === 'ENOENT' || err.code === 'ENOTDIR' ? 'missing' : 'unknown'),
+);
+
 async function readEntry(dir, { openPaths, platform }) {
   const meta = JSON.parse(await fs.readFile(path.join(dir, 'meta.json'), 'utf8'));
   if (!meta || typeof meta.path !== 'string') throw new Error('meta.json has no path');
@@ -83,9 +92,9 @@ async function readEntry(dir, { openPaths, platform }) {
     versions.push({ file: path.join(dir, name), bytes: (await fs.stat(path.join(dir, name))).size });
   }
   let state = 'live';
-  if (!openPaths.has(meta.path) && !(await exists(meta.path))) {
-    state = (await exists(volumeRoot(meta.path, platform))) ? 'missing' : 'unreachable';
-  }
+  const file = openPaths.has(meta.path) ? 'exists' : await fileState(meta.path);
+  if (file === 'unknown') state = 'unreachable';
+  if (file === 'missing') state = (await exists(volumeRoot(meta.path, platform))) ? 'missing' : 'unreachable';
   return { dir, meta, state, versions };
 }
 

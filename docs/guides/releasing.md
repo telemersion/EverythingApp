@@ -8,7 +8,7 @@ Pushing a tag `v<version>` runs [`.github/workflows/release.yml`](../../.github/
 
 - **macOS:** a DMG and a ZIP for Intel (`x64`) and Apple Silicon (`arm64`), signed with the ZHdK Developer ID and notarised. The DMG is for installing; `electron-updater` uses the ZIP.
 - **Windows:** an NSIS installer (`x64`) that installs per user, without administrator rights. It is **unsigned** (see "Windows signing").
-- **Update files:** `latest-mac.yml` and `latest.yml`, or `beta-mac.yml` and `beta.yml` for a pre-release, plus `.blockmap` files.
+- **Update files:** `latest-mac.yml` and `latest.yml` (electron-builder 26 writes these names for pre-releases too; the workflow uploads every `*.yml`), plus `.blockmap` files.
 
 Everything goes into a GitHub Release in [telemersion/EverythingApp](https://github.com/telemersion/EverythingApp), with release notes generated from the commit messages. A tag with a `-` (`v0.1.0-beta.2`) becomes a pre-release.
 

@@ -154,3 +154,19 @@ test('runCleanup with no store does nothing', async () => {
   const result = await runCleanup({ storeDir: path.join(root, 'versions'), now, openPaths: new Set(), log: fakeLog() });
   assert.deepEqual(result, { removedEntries: 0, removedVersions: 0 });
 });
+
+test('a file that is there but cannot be read is not orphaned', { skip: process.platform === 'win32' || process.getuid?.() === 0 }, async (t) => {
+  const root = await mkTemp();
+  const storeDir = path.join(root, 'versions');
+  const locked = path.join(root, 'locked');
+  await fs.mkdir(locked);
+  const file = path.join(locked, 'private.ev.html');
+  await fs.writeFile(file, 'doc');
+  const dir = await storeEntry(storeDir, 'private', { path: file });
+  await fs.chmod(locked, 0o000); // like a folder macOS privacy settings keep the host out of
+  t.after(() => fs.chmod(locked, 0o755));
+  await runCleanup({ storeDir, now, openPaths: new Set(), log: fakeLog() });
+  await fs.chmod(locked, 0o755);
+  const meta = JSON.parse(await fs.readFile(path.join(dir, 'meta.json'), 'utf8'));
+  assert.equal(meta.orphanedSince, undefined, 'not marked: it may well still be there');
+});

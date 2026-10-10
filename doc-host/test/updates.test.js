@@ -132,6 +132,7 @@ test('exit installs a ready update', () => {
   f.updater.emit('update-downloaded', { version: '0.2.0' });
   updates.exit({ restart: false });
   assert.deepEqual(f.calls, [['quitAndInstall', true, false]]);
+  assert.equal(f.updater.autoRunAppAfterInstall, false, 'a plain quit stays closed (macOS ignores the argument)');
 });
 
 test('exit with restart and a ready update', () => {
@@ -140,6 +141,7 @@ test('exit with restart and a ready update', () => {
   f.updater.emit('update-downloaded', { version: '0.2.0' });
   updates.exit({ restart: true });
   assert.deepEqual(f.calls, [['quitAndInstall', true, true]]);
+  assert.equal(f.updater.autoRunAppAfterInstall, true);
 });
 
 test('exit without update', () => {
@@ -231,4 +233,27 @@ test('a move that does not happen lets the start go on', async () => {
   f.dialog.answer = 0;
   f.app.moveToApplicationsFolder = () => false;
   assert.equal(await make(f).offerMove(), false);
+});
+
+test('on macOS the update is ready only once Squirrel has it', () => {
+  const f = fakes();
+  const nativeUpdater = new EventEmitter();
+  const updates = make(f, { nativeUpdater });
+  f.updater.emit('update-downloaded', { version: '0.2.0' });
+  assert.deepEqual(f.notices, [], 'downloaded, but Squirrel has not fetched it yet');
+  assert.notEqual(updates.status().state, 'ready');
+  updates.exit({ restart: true });
+  assert.deepEqual(f.calls, ['relaunch', ['exit', 0]], 'not ready: nothing to install yet');
+  nativeUpdater.emit('update-downloaded');
+  assert.deepEqual(f.notices, [['set', { kind: 'update', version: '0.2.0' }]]);
+  assert.deepEqual(updates.status(), { state: 'ready', version: '0.2.0' });
+});
+
+test('a later check keeps the downloaded update ready', () => {
+  const f = fakes();
+  const updates = make(f);
+  f.updater.emit('update-downloaded', { version: '0.2.0' });
+  f.updater.emit('checking-for-update');
+  f.updater.emit('update-available', { version: '0.2.0' });
+  assert.deepEqual(updates.status(), { state: 'ready', version: '0.2.0' });
 });

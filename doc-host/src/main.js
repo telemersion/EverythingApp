@@ -1,7 +1,7 @@
 'use strict';
 
 const path = require('node:path');
-const { app, Menu, dialog, session, shell } = require('electron');
+const { app, Menu, dialog, session, shell, autoUpdater: squirrel } = require('electron');
 const { autoUpdater } = require('electron-updater');
 const { registerSchemePrivileges } = require('./protocol');
 const { registerIpc } = require('./ipc');
@@ -13,6 +13,7 @@ const { hostResolverRules, mainProbeChecks } = require('./resolver-rules');
 const { createHostLog } = require('./host-log');
 const { runCleanup } = require('./cleanup');
 const { createUpdates } = require('./updates');
+const { aboutPanelOptions } = require('./help');
 
 app.setName('EverythingApp');
 // No names resolve but the update hosts: documents could leak data through
@@ -90,6 +91,9 @@ if (!app.requestSingleInstanceLock()) {
     const userData = app.getPath('userData');
     const log = createHostLog(path.join(userData, 'logs', 'host.log'));
     const probe = Boolean(process.env.EV_PROBE);
+    if (process.platform === 'darwin') {
+      app.setAboutPanelOptions(aboutPanelOptions({ version: app.getVersion(), electron: process.versions.electron }));
+    }
     autoUpdater.logger = {
       info: () => {},
       warn: (message) => log.write(`updater: ${message}`),
@@ -105,6 +109,7 @@ if (!app.requestSingleInstanceLock()) {
       packaged: app.isPackaged,
       platform: process.platform,
       probe,
+      nativeUpdater: app.isPackaged && process.platform === 'darwin' ? squirrel : null,
       workspace: {
         setNotice: (notice) => workspace.setNotice(notice),
         removeNotice: (kind) => workspace.removeNotice(kind),

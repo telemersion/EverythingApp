@@ -13,9 +13,13 @@ const FIRST_CHECK_MS = 2000;
 // Electron's; workspace: setNotice, removeNotice, sheet, showError, quit;
 // log: the host log. Only packaged builds check, never under EV_PROBE (probe),
 // and on macOS only from the Applications folder, where updates can install.
-function createUpdates({ updater, app, workspace, log, dialog, packaged, platform, probe }) {
+// nativeUpdater (macOS: Electron's autoUpdater): electron-updater reports a
+// download before Squirrel.Mac has fetched it; the update is ready, and
+// installs on quit, only once Squirrel reports it downloaded too.
+function createUpdates({ updater, app, workspace, log, dialog, packaged, platform, probe, nativeUpdater = null }) {
   let status = { state: 'idle' };
   let dismissedVersion = null;
+  let fetchingVersion = null; // downloaded, Squirrel still fetching (macOS)
 
   updater.autoDownload = true;
   updater.autoInstallOnAppQuit = true;
@@ -33,7 +37,19 @@ function createUpdates({ updater, app, workspace, log, dialog, packaged, platfor
   updater.on('checking-for-update', () => onEvent({ type: 'checking' }));
   updater.on('update-available', (info) => onEvent({ type: 'available', version: info.version }));
   updater.on('update-not-available', () => onEvent({ type: 'not-available' }));
-  updater.on('update-downloaded', (info) => onEvent({ type: 'downloaded', version: info.version }));
+  updater.on('update-downloaded', (info) => {
+    if (!nativeUpdater) {
+      onEvent({ type: 'downloaded', version: info.version });
+      return;
+    }
+    fetchingVersion = info.version;
+    if (!(status.state === 'ready' && status.version === info.version)) onEvent({ type: 'available', version: info.version });
+  });
+  if (nativeUpdater) {
+    nativeUpdater.on('update-downloaded', () => {
+      if (fetchingVersion) onEvent({ type: 'downloaded', version: fetchingVersion });
+    });
+  }
   updater.on('error', (err) => onEvent({ type: 'error', message: (err && err.message) || String(err) }));
 
   const restart = () => workspace.quit({ restart: true });
@@ -89,6 +105,8 @@ function createUpdates({ updater, app, workspace, log, dialog, packaged, platfor
     // installs, silently, and relaunches the host when asked to.
     exit({ restart: relaunch = false } = {}) {
       if (status.state === 'ready') {
+        // macOS ignores quitAndInstall's arguments and follows this flag.
+        updater.autoRunAppAfterInstall = relaunch;
         updater.quitAndInstall(true, relaunch);
         return;
       }

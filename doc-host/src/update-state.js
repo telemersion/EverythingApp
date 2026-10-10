@@ -14,8 +14,9 @@ function nextStatus(status, event) {
   switch (event.type) {
     case 'checking':
       return status.state === 'ready' ? status : { state: 'checking' };
-    case 'available':
-      return { state: 'downloading', version: event.version };
+    case 'available': // every check announces the update again; a downloaded one stays ready
+      return status.state === 'ready' && status.version === event.version
+        ? status : { state: 'downloading', version: event.version };
     case 'not-available':
       return status.state === 'ready' ? status : { state: 'current' };
     case 'downloaded':

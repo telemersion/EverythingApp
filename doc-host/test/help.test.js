@@ -2,7 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { htmlAssociationSheet, aboutSheet } = require('../src/help');
+const { htmlAssociationSheet, aboutSheet, aboutPanelOptions } = require('../src/help');
 
 test('the HTML association sheet explains the steps for the OS', () => {
   assert.deepEqual(htmlAssociationSheet('darwin'), {
@@ -17,4 +17,9 @@ test('the HTML association sheet explains the steps for the OS', () => {
 test('the About sheet names the version and Electron', () => {
   assert.deepEqual(aboutSheet({ version: '0.1.0', electron: '44.5.1' }),
     { message: 'EverythingApp', detail: 'Version 0.1.0\nElectron 44.5.1', buttons: ['OK'] });
+});
+
+test('the macOS About panel names the version and Electron', () => {
+  assert.deepEqual(aboutPanelOptions({ version: '0.1.0', electron: '44.5.1' }),
+    { applicationName: 'EverythingApp', applicationVersion: '0.1.0', version: 'Electron 44.5.1' });
 });

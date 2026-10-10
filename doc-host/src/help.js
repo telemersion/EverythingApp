@@ -16,4 +16,9 @@ function aboutSheet({ version, electron }) {
   return { message: 'EverythingApp', detail: `Version ${version}\nElectron ${electron}`, buttons: ['OK'] };
 }
 
-module.exports = { htmlAssociationSheet, aboutSheet };
+// The macOS About panel (EverythingApp → About EverythingApp).
+function aboutPanelOptions({ version, electron }) {
+  return { applicationName: 'EverythingApp', applicationVersion: version, version: `Electron ${electron}` };
+}
+
+module.exports = { htmlAssociationSheet, aboutSheet, aboutPanelOptions };

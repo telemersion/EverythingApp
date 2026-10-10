@@ -19,6 +19,7 @@ test('a ready update stays ready', () => {
   for (const event of [{ type: 'checking' }, { type: 'not-available' }, { type: 'error', message: 'offline' }]) {
     assert.deepEqual(nextStatus(ready, event), ready, event.type);
   }
+  assert.deepEqual(nextStatus(ready, { type: 'available', version: '0.2.0' }), ready, 'the same version again');
   assert.deepEqual(nextStatus(ready, { type: 'available', version: '0.3.0' }), { state: 'downloading', version: '0.3.0' });
   assert.deepEqual(nextStatus(ready, { type: 'downloaded', version: '0.3.0' }), { state: 'ready', version: '0.3.0' });
 });
