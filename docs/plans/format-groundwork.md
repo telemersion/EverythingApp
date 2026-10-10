@@ -249,7 +249,7 @@ Recorded 2026-10-10 on macOS 26 (arm64), from source.
 3. **Probe:** 25 PASS, exit 0 (`npm run probe`).
 4. **Whole-branch review** (a fresh reviewer): Review Focus 1–5 hold; one Important finding fixed before release: kit 2.0.0's fallback read the module elements at save time, so a script that rewrote the page saved a file without its modules; `init()` now reads them once (kit re-pinned, smoke passes again). Seven minors deferred (ledger).
 5. **Specification check:** the frame text and the module line in document-spec section 2 equal `buildDocument` output byte for byte.
-6. **Manual check (Task 9, Step 2):** open.
+6. **Manual check (Task 9, Step 2): pass** (the user, 2026-10-10, from source). Saving the to-do list wrote the id (`429f27ec…`), and the two items it added carry the sort keys `V` and `l`, in the order they were added; the id stayed through reopening and a save from Chrome.
 7. **Release 0.2.0 (Task 9, Step 3):** open.
 
 ## Spike results
