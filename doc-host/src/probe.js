@@ -15,7 +15,22 @@ const { app } = require('electron');
 function isolateUserData() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ev-probe-'));
   app.setPath('userData', dir);
-  process.on('exit', () => fs.rmSync(dir, { recursive: true, force: true }));
+  process.on('exit', () => {
+    try {
+      fs.rmSync(dir, { recursive: true, force: true });
+    } catch (err) {
+      console.log(`[probe] could not remove ${dir}: ${err.message}`);
+    }
+  });
+}
+
+// The probe fails if no document reports "done" within ms of the start, for
+// example when the probe document never opens (a sheet would wait forever).
+function armProbeDeadline(ms = 60000) {
+  setTimeout(() => {
+    console.log('[probe] FAIL timeout: no probe document finished');
+    app.exit(1);
+  }, ms).unref();
 }
 
 // doc: the Document the probe runs in (the first one opened). mainChecks:
@@ -40,6 +55,7 @@ function attachProbe(doc, { mainChecks = Promise.resolve([]) } = {}) {
       print(`[probe] FAIL main-process checks (${err.message})`);
     }
     console.log(message);
+    console.log(`[probe] exiting with ${failed ? 1 : 0}`);
     app.exit(failed ? 1 : 0);
   });
   setTimeout(() => {
@@ -48,4 +64,4 @@ function attachProbe(doc, { mainChecks = Promise.resolve([]) } = {}) {
   }, 15000);
 }
 
-module.exports = { isolateUserData, attachProbe };
+module.exports = { isolateUserData, armProbeDeadline, attachProbe };

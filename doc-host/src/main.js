@@ -8,7 +8,7 @@ const { registerIpc } = require('./ipc');
 const { Workspace } = require('./workspace');
 const { buildMenu } = require('./menu');
 const { pathsFromArgv } = require('./argv');
-const { isolateUserData, attachProbe } = require('./probe');
+const { isolateUserData, armProbeDeadline, attachProbe } = require('./probe');
 const { hostResolverRules, mainProbeChecks } = require('./resolver-rules');
 const { createHostLog } = require('./host-log');
 const { runCleanup } = require('./cleanup');
@@ -19,7 +19,10 @@ app.setName('EverythingApp');
 // DNS names (dns-prefetch). See resolver-rules.js.
 app.commandLine.appendSwitch('host-resolver-rules', hostResolverRules());
 registerSchemePrivileges();
-if (process.env.EV_PROBE) isolateUserData();
+if (process.env.EV_PROBE) {
+  isolateUserData();
+  armProbeDeadline();
+}
 
 if (!app.requestSingleInstanceLock()) {
   app.quit();

@@ -11,6 +11,7 @@ on:
 jobs:
   build-mac:
     runs-on: macos-latest
+    timeout-minutes: 45
     defaults:
       run:
         working-directory: doc-host
@@ -90,6 +91,7 @@ jobs:
 
   build-win:
     runs-on: windows-latest
+    timeout-minutes: 45
     defaults:
       run:
         working-directory: doc-host
@@ -139,6 +141,7 @@ jobs:
   release:
     needs: [build-mac, build-win]
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     permissions:
       contents: write
     steps:

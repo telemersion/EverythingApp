@@ -13,7 +13,7 @@ const os = require('node:os');
 const path = require('node:path');
 const assert = require('node:assert/strict');
 const { isDeepStrictEqual } = require('node:util');
-const { app, ipcMain, BaseWindow } = require('electron');
+const { app, ipcMain, BaseWindow, screen } = require('electron');
 const { registerSchemePrivileges } = require('../src/protocol');
 const { registerIpc } = require('../src/ipc');
 const { Workspace, closeSummaryDetail } = require('../src/workspace');
@@ -702,7 +702,17 @@ async function run(dir) {
     assert.deepEqual(layoutOf(third), [{ tabs: [good], selected: good }]);
     assert.equal(third.activeDocument().filePath, good);
     assert.equal(third.win.isVisible(), true, 'the window shows');
-    assert.deepEqual(third.win.getBounds(), { x: 80, y: 80, width: 900, height: 700 });
+    // The saved bounds, unless the display is too small for them (CI runners):
+    // then the window is fitted into the work area.
+    const saved = { x: 80, y: 80, width: 900, height: 700 };
+    const area = screen.getPrimaryDisplay().workArea;
+    const bounds = third.win.getBounds();
+    if (saved.y + saved.height <= area.y + area.height && saved.x + saved.width <= area.x + area.width) {
+      assert.deepEqual(bounds, saved);
+    } else {
+      assert.ok(bounds.x >= area.x && bounds.y >= area.y && bounds.x + bounds.width <= area.x + area.width
+        && bounds.y + bounds.height <= area.y + area.height, `inside the work area: ${JSON.stringify({ bounds, area })}`);
+    }
     // The host UI names each one at the top of the list, which shows while it does.
     assert.equal(third.model.list.visible, true);
     await third.hostUi.ready;

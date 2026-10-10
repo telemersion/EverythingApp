@@ -21,4 +21,7 @@ if (args[0] === '--probe') {
 }
 const files = args.map((f) => path.resolve(f));
 const child = spawn(electron, [entry, ...files], { stdio: 'inherit', env, cwd: path.join(__dirname, '..') });
-child.on('exit', (code) => process.exit(code ?? 1));
+child.on('exit', (code, signal) => {
+  if (entry !== '.' || env.EV_PROBE) console.log(`[start] Electron exited (code ${code}, signal ${signal})`);
+  process.exit(code ?? 1);
+});
