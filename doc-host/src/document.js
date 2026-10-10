@@ -6,6 +6,7 @@ const { WebContentsView, session, clipboard } = require('electron');
 const { checkDocument, formatReport } = require('./conformance');
 const { validateSnapshot } = require('./validate');
 const { writeDocument, sha256 } = require('./write');
+const { newDocId } = require('./doc-id');
 const { sectionHashes, classifyChange, watchFile } = require('./watch');
 const { serveDocument } = require('./protocol');
 const { hardenSession, hardenContents, WEB_PREFERENCES } = require('./security');
@@ -41,6 +42,8 @@ class Document {
 
     this.html = html;                       // what the protocol handler serves
     this.known = sectionHashes(parts);      // what we believe is on disk
+    // A new document gets its id now; it reaches the file with the first write.
+    this.docId = parts.docId || newDocId();
     this.running = this.known.outsideData;  // everything outside the data, as running in the view
     this.knownFileHash = sha256(html);
 
@@ -260,7 +263,7 @@ class Document {
         }
         // Refused if the data on disk is not the data we last saw (known).
         written = await writeDocument(this.filePath, snapshot.json,
-          { storeDir: this.storeDir, expectedDataHash: this.known.data, ...(kit ? { kit } : {}) });
+          { storeDir: this.storeDir, expectedDataHash: this.known.data, docId: this.docId, ...(kit ? { kit } : {}) });
         this.writes++;
       } catch (err) {
         if (generation !== this.generation) return false;
@@ -390,6 +393,8 @@ class Document {
   acceptOnDisk(html) {
     const check = checkDocument(html);
     this.known = sectionHashes(check.parts);
+    // The id on disk wins; while the file has none, keep the one assigned in memory.
+    if (check.parts.docId) this.docId = check.parts.docId;
     this.knownFileHash = sha256(html);
   }
 

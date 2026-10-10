@@ -256,3 +256,42 @@ test('a kit write checks the expected data hash like a save', async () => {
   await writeDocument(filePath, null, { storeDir, kit: currentKit(), expectedDataHash: good });
   assert.equal(parseDocument(await fs.readFile(filePath, 'utf8')).parts.kitVersion, '2.0.0');
 });
+
+const ID_A = 'a'.repeat(32);
+const ID_B = 'b'.repeat(32);
+
+test('a save writes the given id into a file with an empty id and changes nothing else outside the data block', async () => {
+  const { filePath, storeDir } = await setup();
+  const original = await fs.readFile(filePath, 'utf8');
+  await writeDocument(filePath, '{"rows":[]}', { storeDir, docId: ID_A });
+  const parts = parseDocument(await fs.readFile(filePath, 'utf8')).parts;
+  assert.deepEqual(parts, { ...parseDocument(original).parts, docId: ID_A, data: '{"rows":[]}' });
+});
+
+test('a save never replaces an id already on disk', async () => {
+  const { filePath, storeDir } = await setup();
+  await fs.writeFile(filePath, makeDocument({ docId: ID_A }), 'utf8');
+  await writeDocument(filePath, '{"rows":[]}', { storeDir, docId: ID_B });
+  assert.equal(parseDocument(await fs.readFile(filePath, 'utf8')).parts.docId, ID_A);
+});
+
+test('a kit write of a clean document writes the id too', async () => {
+  const { filePath, storeDir } = await setup();
+  const old = findKit('1.9.0');
+  await fs.writeFile(filePath, makeDocument({ kitVersion: old.version, kit: old.text }), 'utf8');
+  await writeDocument(filePath, null, { storeDir, kit: currentKit(), docId: ID_A });
+  const parts = parseDocument(await fs.readFile(filePath, 'utf8')).parts;
+  assert.equal(parts.docId, ID_A);
+  assert.equal(parts.kitVersion, '2.0.0');
+});
+
+test('meta.json records the document id of the written file', async () => {
+  const { filePath, storeDir } = await setup();
+  await writeDocument(filePath, '{"rows":[]}', { storeDir, docId: ID_A });
+  const meta = JSON.parse(await fs.readFile(path.join(storeDir, pathKey(filePath), 'meta.json'), 'utf8'));
+  assert.equal(meta.docId, ID_A);
+  const { filePath: other, storeDir: otherStore } = await setup();
+  await writeDocument(other, '{"rows":[]}', { storeDir: otherStore });
+  const none = JSON.parse(await fs.readFile(path.join(otherStore, pathKey(other), 'meta.json'), 'utf8'));
+  assert.equal(none.docId, null);
+});
