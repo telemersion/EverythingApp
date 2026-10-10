@@ -28,4 +28,16 @@ function replaceKit(html, kit) {
   return buildDocument({ ...frame.parts, kitVersion: kit.version, kit: kit.text });
 }
 
-module.exports = { escapeJson, splice, replaceKit };
+// Fills in the document id when the file has none yet; a file that already
+// has an id is returned unchanged. Works through the frame like splice.
+function setDocId(html, docId) {
+  if (typeof docId !== 'string' || !/^[0-9a-f]{32}$/.test(docId)) {
+    throw new TypeError('A document id is 32 lowercase hex characters.');
+  }
+  const frame = parseDocument(html);
+  if (!frame.ok) throw new Error('The file does not match the document frame.');
+  if (frame.parts.docId) return html;
+  return buildDocument({ ...frame.parts, docId });
+}
+
+module.exports = { escapeJson, splice, replaceKit, setDocId };

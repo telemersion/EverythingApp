@@ -10,12 +10,15 @@ const FRAME = [
   '">\n<head>\n  <meta charset="utf-8">\n  <meta name="ev-host-api" content="', 'api',
   '">\n  <meta name="ev-doc-type" content="', 'docType',
   '" data-version="', 'docTypeVersion',
+  '">\n  <meta name="ev-doc-id" content="', 'docId',
   '">\n  <title>', 'title',
   '</title>\n  <style id="ev-style">', 'style',
-  '</style>\n</head>\n<body>\n  <div id="ev-app"></div>\n  <script type="application/json" id="ev-data">', 'data',
+  '</style>\n  <script type="application/json" id="ev-manifest">', 'manifest',
+  '</script>\n</head>\n<body>\n  <div id="ev-app"></div>\n  <script type="application/json" id="ev-data">', 'data',
   '</script>\n  <script id="ev-kit" data-kit-version="', 'kitVersion',
   '">', 'kit',
-  '</script>\n  <script id="ev-script">', 'script',
+  '</script>\n', 'modules',
+  '  <script id="ev-script">', 'script',
   '</script>\n</body>\n</html>\n',
 ];
 
@@ -27,16 +30,53 @@ const SLOT_END = {
   api: /"/g,
   docType: /"/g,
   docTypeVersion: /"/g,
+  docId: /"/g,
   title: /</g,
   style: /<\/style/gi,
+  manifest: /<\/script/gi,
   data: /<\/script/gi,
   kitVersion: /"/g,
   kit: /<\/script/gi,
   script: /<\/script/gi,
 };
 
+// Zero or more lines, one per module, between the kit and the script.
+const MODULE_LINE = ['  <script id="ev-module-', 'name', '" data-module-version="', 'version', '">', 'text', '</script>\n'];
+const MODULE_END = { name: /"/g, version: /"/g, text: /<\/script/gi };
+
+function buildModules(modules) {
+  return modules.map((m) => MODULE_LINE.map((piece, i) => (i % 2 === 1 ? m[piece] : piece)).join('')).join('');
+}
+
 function buildDocument(parts) {
-  return FRAME.map((piece, i) => (i % 2 === 1 ? parts[piece] : piece)).join('');
+  return FRAME.map((piece, i) => (i % 2 === 0 ? piece : piece === 'modules' ? buildModules(parts.modules) : parts[piece])).join('');
+}
+
+// Reads module lines from pos. Returns { ok: true, modules, pos } or a failure
+// like parseDocument's.
+function parseModules(html, pos) {
+  const modules = [];
+  while (html.startsWith(MODULE_LINE[0], pos)) {
+    const module = {};
+    for (let i = 0; i < MODULE_LINE.length; i += 2) {
+      const literal = MODULE_LINE[i];
+      if (!html.startsWith(literal, pos)) {
+        const offset = firstMismatch(html, literal, pos);
+        return { ok: false, offset, expected: literal.slice(offset - pos) };
+      }
+      pos += literal.length;
+      const slot = MODULE_LINE[i + 1];
+      if (slot === undefined) break;
+      const end = MODULE_END[slot];
+      end.lastIndex = pos;
+      const match = end.exec(html);
+      if (!match) return { ok: false, offset: html.length, expected: MODULE_LINE[i + 2] };
+      module[slot] = html.slice(pos, match.index);
+      pos = match.index;
+    }
+    modules.push(module);
+  }
+  return { ok: true, modules, pos };
 }
 
 // Returns { ok: true, parts } or { ok: false, offset, expected }, where
@@ -53,6 +93,13 @@ function parseDocument(html) {
     pos += literal.length;
     const slot = FRAME[i + 1];
     if (slot === undefined) break;
+    if (slot === 'modules') {
+      const found = parseModules(html, pos);
+      if (!found.ok) return found;
+      parts.modules = found.modules;
+      pos = found.pos;
+      continue;
+    }
     const end = SLOT_END[slot];
     end.lastIndex = pos;
     const match = end.exec(html);

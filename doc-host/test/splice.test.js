@@ -2,7 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { escapeJson, splice, replaceKit } = require('../src/splice');
+const { escapeJson, splice, replaceKit, setDocId } = require('../src/splice');
 const { parseDocument } = require('../src/frame');
 const { checkDocument } = require('../src/conformance');
 const { findKit, currentKit } = require('../kit');
@@ -59,4 +59,22 @@ test('replaceKit changes only the kit and its version', () => {
 
 test('replaceKit refuses a file that does not match the frame', () => {
   assert.throws(() => replaceKit('<html></html>', currentKit()), /document frame/);
+});
+
+test('setDocId fills an empty id and keeps every other byte', () => {
+  const html = makeDocument();
+  const id = 'a'.repeat(32);
+  const next = setDocId(html, id);
+  assert.equal(next, html.replace('<meta name="ev-doc-id" content="">', `<meta name="ev-doc-id" content="${id}">`));
+});
+
+test('setDocId leaves a non-empty id unchanged', () => {
+  const html = makeDocument({ docId: 'b'.repeat(32) });
+  assert.equal(setDocId(html, 'a'.repeat(32)), html);
+});
+
+test('setDocId rejects an id that is not 32 lowercase hex characters', () => {
+  for (const bad of ['', 'A'.repeat(32), 'a'.repeat(31), 'g'.repeat(32), null]) {
+    assert.throws(() => setDocId(makeDocument(), bad), TypeError);
+  }
 });
