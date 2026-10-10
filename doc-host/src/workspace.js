@@ -53,7 +53,7 @@ const INTENT_ACTIONS = {
   'resize-split': 'resize the panes',
   'move-tab': 'move',
   split: 'split the panes for',
-  'dismiss-notice': 'dismiss the notice',
+  notice: 'answer the notice',
 };
 
 // The one window of the host. It holds every open document as a tab in a
@@ -73,7 +73,8 @@ class Workspace {
     this.model = wm.createModel();
     this.layout = null;          // the last computeLayout()
     this.menu = null;            // the application menu, if one is installed (menu.js)
-    this.notice = null;          // { failed } from restore(), shown by the host UI until dismissed
+    this.notices = [];           // workspace notices (restore failures, a ready host update), shown until dismissed
+    this.onNoticeAction = () => {}; // (kind, action) for actions other than dismiss (main.js sets it)
     this.docTypes = new WeakMap(); // Document → { html, docType } of its running page
     this.prompting = false;      // a sheet is open
     this.restoring = false;
@@ -270,10 +271,10 @@ class Workspace {
   // ---------- Model and layout ----------
 
   // Sets the model, lays out the views, updates the title and the menu, and
-  // sends the host UI its new state. While the restore notice exists, the
-  // list that holds it is shown.
+  // sends the host UI its new state. While a notice exists, the list that
+  // holds it is shown.
   apply(model) {
-    this.model = this.notice && !model.list.visible ? wm.setList(model, { visible: true }) : model;
+    this.model = this.notices.length > 0 && !model.list.visible ? wm.setList(model, { visible: true }) : model;
     if (this.win.isDestroyed()) return;
     this.layoutViews();
     this.updateTitle();
@@ -450,7 +451,7 @@ class Workspace {
       documents: this.openDocuments().map((doc) => ({
         id: doc.id, path: doc.filePath, docType: this.docTypeOf(doc), status: doc.status,
       })),
-      notice: this.notice,
+      notices: this.notices,
       platform: process.platform,
     }));
   }
@@ -485,9 +486,9 @@ class Workspace {
         case 'resize-split':
           this.apply(wm.resizeSplit(this.model, intent.splitId, intent.sizes));
           break;
-        case 'dismiss-notice':
-          this.notice = null;
-          this.apply(this.model);
+        case 'notice':
+          if (intent.action === 'dismiss') this.removeNotice(intent.kind);
+          else this.onNoticeAction(intent.kind, intent.action);
           break;
         case 'move-tab':
           if (doc) this.applyAndFocus(wm.moveTab(this.model, intent.docId, intent.paneId, intent.index));
@@ -505,6 +506,20 @@ class Workspace {
     } catch (err) {
       await this.showError({ action: INTENT_ACTIONS[intent.type] || 'do that with', filePath: doc?.filePath, err });
     }
+  }
+
+  // ---------- Notices ----------
+
+  // Shows a workspace notice, replacing any notice of the same kind.
+  setNotice(notice) {
+    this.notices = [...this.notices.filter((n) => n.kind !== notice.kind), notice];
+    if (!this.restoring) this.apply(this.model);
+  }
+
+  removeNotice(kind) {
+    if (!this.notices.some((n) => n.kind === kind)) return;
+    this.notices = this.notices.filter((n) => n.kind !== kind);
+    if (!this.restoring) this.apply(this.model);
   }
 
   // ---------- Sheets ----------
@@ -654,7 +669,7 @@ class Workspace {
 
   // Reopens the documents, layout and window bounds of workspace.json, every
   // file checked again, then shows the window. A file that does not open is
-  // named once in failed (also kept as this.notice for the host UI).
+  // named once in failed (also kept as the restore notice for the host UI).
   async restore() {
     this.restoring = true;
     const failed = [];
@@ -670,7 +685,8 @@ class Workspace {
         }
       } finally {
         this.restoring = false;
-        this.notice = failed.length > 0 ? { failed } : null;
+        this.notices = this.notices.filter((n) => n.kind !== 'restore');
+        if (failed.length > 0) this.notices.push({ kind: 'restore', failed });
         // The window shows once the host UI can draw in it (a failure to load
         // it is reported by the constructor).
         await this.hostUi.ready.catch(() => {});

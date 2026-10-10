@@ -31,14 +31,14 @@ function loadPage() {
   return { window, document: window.document, sent, render: (state) => onState(state), thumbnail: (docId, url) => onThumbnail(docId, url) };
 }
 
-function stateOf(model, documents, { notice = null } = {}) {
+function stateOf(model, documents, { notices = [] } = {}) {
   const byId = new Map(documents.map((d) => [d.id, d]));
   const bannerHeight = (paneId) => {
     const pane = findPane(model, paneId);
     const doc = pane && byId.get(pane.selected);
     return doc ? bannerRowHeight(describeStatus(doc.status, { name: path.basename(doc.path), filePath: doc.path }).banners.length) : 0;
   };
-  return buildUiState({ model, layout: computeLayout(model, SIZE, { bannerHeight }), documents, notice, platform: 'darwin' });
+  return buildUiState({ model, layout: computeLayout(model, SIZE, { bannerHeight }), documents, notices, platform: 'darwin' });
 }
 
 function findPane(model, paneId) {
@@ -200,17 +200,39 @@ test('the empty state fills the pane and offers Open…', () => {
 
 test('the restore notice sits at the top of the list until OK', () => {
   const { window, document, render, sent } = loadPage();
-  render(stateOf(createModel(), [], { notice: { failed: [{ path: `/a/${EVIL}`, reason: 'moved or deleted' }] } }));
-  const notice = document.getElementById('notice');
-  assert.equal(notice.hidden, false);
-  assert.equal(document.getElementById('list').firstElementChild, notice);
-  assert.equal(document.getElementById('notice-message').textContent, 'Some documents from your last session could not be opened:');
+  render(stateOf(createModel(), [], { notices: [{ kind: 'restore', failed: [{ path: `/a/${EVIL}`, reason: 'moved or deleted' }] }] }));
+  const notices = document.getElementById('notices');
+  assert.equal(document.getElementById('list').firstElementChild, notices);
+  const [notice] = notices.querySelectorAll('section.notice');
+  assert.equal(notice.querySelector('p').textContent, 'Some documents from your last session could not be opened:');
   assert.deepEqual([...notice.querySelectorAll('li')].map((li) => li.textContent), [`${EVIL} — moved or deleted`]);
   assert.equal(document.querySelectorAll('img').length, 0);
-  document.getElementById('notice-ok').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
-  assert.deepEqual(sent, [{ type: 'dismiss-notice' }]);
+  notice.querySelector('button').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  assert.deepEqual(sent, [{ type: 'notice', kind: 'restore', action: 'dismiss' }]);
   render(stateOf(createModel(), []));
-  assert.equal(notice.hidden, true);
+  assert.equal(notices.querySelectorAll('section').length, 0);
+});
+
+test('two notices each have their own buttons', () => {
+  const { window, document, render, sent } = loadPage();
+  render(stateOf(createModel(), [], {
+    notices: [
+      { kind: 'restore', failed: [{ path: '/a/gone.ev.html', reason: 'moved or deleted' }] },
+      { kind: 'update', version: '0.2.0' },
+    ],
+  }));
+  const sections = [...document.querySelectorAll('#notices section.notice')];
+  assert.equal(sections.length, 2);
+  assert.deepEqual([...sections[1].querySelectorAll('button')].map((b) => b.textContent), ['Restart Now', 'Later']);
+  assert.equal(sections[1].querySelector('p').textContent, 'EverythingApp 0.2.0 is ready. It installs when you quit.');
+  assert.equal(sections[1].querySelectorAll('li').length, 0);
+  const later = [...sections[1].querySelectorAll('button')].find((b) => b.textContent === 'Later');
+  later.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  sections[1].querySelector('button').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  assert.deepEqual(sent, [
+    { type: 'notice', kind: 'update', action: 'dismiss' },
+    { type: 'notice', kind: 'update', action: 'restart' },
+  ]);
 });
 
 test('a hidden list draws nothing', () => {

@@ -9,8 +9,8 @@ const { emptyStatus } = require('../src/status');
 
 const SIZE = { width: 1000, height: 700 };
 
-function stateOf(model, documents, { notice = null } = {}) {
-  return buildUiState({ model, layout: computeLayout(model, SIZE), documents, notice, platform: 'darwin' });
+function stateOf(model, documents, { notices = [] } = {}) {
+  return buildUiState({ model, layout: computeLayout(model, SIZE), documents, notices, platform: 'darwin' });
 }
 
 test('the state names panes, tabs and banners from the model and statuses', () => {
@@ -20,7 +20,7 @@ test('the state names panes, tabs and banners from the model and statuses', () =
     { id: 'd2', path: '/b/x.ev.html', docType: 'note', status: emptyStatus() },
   ];
   const layout = computeLayout(model, SIZE);
-  const state = buildUiState({ model, layout, documents, notice: null, platform: 'darwin' });
+  const state = buildUiState({ model, layout, documents, notices: [], platform: 'darwin' });
   assert.deepEqual(state.panes, [{
     paneId: 'p1',
     focused: true,
@@ -40,7 +40,7 @@ test('the state names panes, tabs and banners from the model and statuses', () =
   assert.equal(state.layout, layout);
   assert.deepEqual(state.list, model.list);
   assert.equal(state.platform, 'darwin');
-  assert.equal(state.notice, null);
+  assert.deepEqual(state.notices, []);
 });
 
 test('an empty workspace says so', () => {
@@ -51,22 +51,44 @@ test('an empty workspace says so', () => {
 });
 
 test('the restore notice uses labels and reasons', () => {
-  const state = stateOf(createModel(), [], { notice: { failed: [{ path: '/a/gone.ev.html', reason: 'moved or deleted' }] } });
-  assert.deepEqual(state.notice, {
+  const state = stateOf(createModel(), [], { notices: [{ kind: 'restore', failed: [{ path: '/a/gone.ev.html', reason: 'moved or deleted' }] }] });
+  assert.deepEqual(state.notices, [{
+    kind: 'restore',
     message: 'Some documents from your last session could not be opened:',
     items: [{ label: 'gone.ev.html', reason: 'moved or deleted' }],
-  });
-  assert.equal(NOTICE_MESSAGE, state.notice.message);
+    actions: [{ id: 'dismiss', label: 'OK' }],
+  }]);
+  assert.equal(NOTICE_MESSAGE, state.notices[0].message);
 });
 
 test('notice items that share a file name name their folder', () => {
   const state = stateOf(createModel(), [], {
-    notice: { failed: [{ path: '/a/x.ev.html', reason: 'moved or deleted' }, { path: '/b/x.ev.html', reason: 'not an EverythingApp document' }] },
+    notices: [{ kind: 'restore', failed: [{ path: '/a/x.ev.html', reason: 'moved or deleted' }, { path: '/b/x.ev.html', reason: 'not an EverythingApp document' }] }],
   });
-  assert.deepEqual(state.notice.items, [
+  assert.deepEqual(state.notices[0].items, [
     { label: 'x.ev.html · a', reason: 'moved or deleted' },
     { label: 'x.ev.html · b', reason: 'not an EverythingApp document' },
   ]);
+});
+
+test('the update notice offers Restart Now and Later, after the restore notice', () => {
+  const state = stateOf(createModel(), [], {
+    notices: [
+      { kind: 'update', version: '0.2.0' },
+      { kind: 'restore', failed: [{ path: '/a/gone.ev.html', reason: 'moved or deleted' }] },
+    ],
+  });
+  assert.deepEqual(state.notices.map((n) => n.kind), ['restore', 'update']);
+  assert.deepEqual(state.notices[1], {
+    kind: 'update',
+    message: 'EverythingApp 0.2.0 is ready. It installs when you quit.',
+    items: [],
+    actions: [{ id: 'restart', label: 'Restart Now' }, { id: 'dismiss', label: 'Later' }],
+  });
+});
+
+test('a restore notice without failures is not shown', () => {
+  assert.deepEqual(stateOf(createModel(), [], { notices: [{ kind: 'restore', failed: [] }] }).notices, []);
 });
 
 test('panes come in tree order with focus and selection; the badge is the most urgent', () => {

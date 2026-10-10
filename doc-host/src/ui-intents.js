@@ -16,7 +16,7 @@ const { panesInOrder, docsInOrder } = require('./workspace-model');
 //        | { type: 'resize-split', splitId, sizes }
 //        | { type: 'move-tab', docId, paneId, index } | { type: 'split', docId, paneId, edge }
 //        | { type: 'drag', active }
-//        | { type: 'dismiss-notice' }
+//        | { type: 'notice', kind: 'restore'|'update', action: 'dismiss'|'restart' }   // restart: update only
 
 const MAX_OPEN_FILES = 100;
 const BANNER_KINDS = Object.freeze([...BADGE_ORDER, 'kit-updated', 'updated-from-disk']);
@@ -81,7 +81,12 @@ const TYPES = {
       ? { type: 'split', docId: p.docId, paneId: p.paneId, edge: p.edge } : null),
   },
   drag: { fields: ['active'], check: (p) => (typeof p.active === 'boolean' ? { type: 'drag', active: p.active } : null) },
-  'dismiss-notice': { fields: [], check: () => ({ type: 'dismiss-notice' }) },
+  notice: {
+    fields: ['kind', 'action'],
+    check: (p) => ((p.kind === 'restore' && p.action === 'dismiss')
+      || (p.kind === 'update' && (p.action === 'dismiss' || p.action === 'restart'))
+      ? { type: 'notice', kind: p.kind, action: p.action } : null),
+  },
 };
 
 // The intent a payload from the host UI describes, or null. ids: the doc,

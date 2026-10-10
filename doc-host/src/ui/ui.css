@@ -151,6 +151,15 @@ button:focus-visible {
   overflow-wrap: anywhere;
 }
 
+.notices {
+  flex: none;
+}
+
+.notice-actions {
+  display: flex;
+  gap: 6px;
+}
+
 .entries {
   flex: 1;
   overflow-y: auto;

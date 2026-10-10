@@ -124,12 +124,22 @@
 
   // ---------- Document list ----------
 
-  function renderNotice() {
-    const { notice } = state;
-    byId('notice').hidden = !notice;
-    if (!notice) return;
-    byId('notice-message').textContent = notice.message;
-    byId('notice-items').replaceChildren(...notice.items.map((item) => element('li', null, `${item.label} — ${item.reason}`)));
+  // One section per workspace notice, each with its own buttons.
+  function renderNotices() {
+    byId('notices').replaceChildren(...state.notices.map((notice) => {
+      const section = element('section', 'notice');
+      section.setAttribute('role', 'status');
+      section.append(element('p', null, notice.message));
+      if (notice.items.length > 0) {
+        section.append(element('ul', null));
+        section.lastChild.append(...notice.items.map((item) => element('li', null, `${item.label} — ${item.reason}`)));
+      }
+      const actions = element('div', 'notice-actions');
+      actions.append(...notice.actions.map((action) => button(null, action.label,
+        () => send({ type: 'notice', kind: notice.kind, action: action.id }))));
+      section.append(actions);
+      return section;
+    }));
   }
 
   const thumbsMode = () => state.list.mode === 'thumbnails';
@@ -184,7 +194,7 @@
     list.hidden = !rect;
     if (!rect) return;
     place(list, rect);
-    renderNotice();
+    renderNotices();
     const focused = state.panes.find((pane) => pane.focused);
     const activeDocId = focused ? focused.selected : null;
     const nodes = [];
@@ -214,7 +224,6 @@
     followDrag(event.currentTarget, event, (x) => send({ type: 'list', width: startWidth + x - startX }));
   });
 
-  byId('notice-ok').addEventListener('click', () => send({ type: 'dismiss-notice' }));
 
   // ---------- Tab strips ----------
 

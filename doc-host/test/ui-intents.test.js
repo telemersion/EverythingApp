@@ -41,7 +41,9 @@ test('every intent type in its valid shape', () => {
     { type: 'split', docId: 'd1', paneId: 'p1', edge: 'bottom' },
     { type: 'drag', active: true },
     { type: 'drag', active: false },
-    { type: 'dismiss-notice' },
+    { type: 'notice', kind: 'restore', action: 'dismiss' },
+    { type: 'notice', kind: 'update', action: 'dismiss' },
+    { type: 'notice', kind: 'update', action: 'restart' },
   ];
   for (const p of valid) assert.deepEqual(parseIntent(p, ids), p, JSON.stringify(p));
 });
@@ -57,7 +59,7 @@ test('fields a type does not have are refused', () => {
   for (const p of [
     { type: 'select', docId: 'd1', paneId: 'p1' },
     { type: 'open-dialog', paneId: 'p1' },
-    { type: 'dismiss-notice', all: true },
+    { type: 'notice', kind: 'update', action: 'dismiss', version: '1' },
     { type: 'list', width: 300, height: 10 },
     { type: 'drag', active: true, docId: 'd1' },
   ]) {
@@ -67,6 +69,11 @@ test('fields a type does not have are refused', () => {
 
 test('bad values for each type are refused', () => {
   const bad = [
+    { type: 'dismiss-notice' },
+    { type: 'notice', kind: 'restore', action: 'restart' },
+    { type: 'notice', kind: 'other', action: 'dismiss' },
+    { type: 'notice', kind: 'update' },
+    { type: 'notice', kind: 'update', action: 'install' },
     [], 42, true, { docId: 'd1' }, { type: 7 }, { type: 'SELECT', docId: 'd1' },
     { type: 'select' }, { type: 'close', docId: 1 }, { type: 'close', docId: 'p1' },
     { type: 'banner', docId: 'd1', kind: 'nope', action: 'dismiss' },

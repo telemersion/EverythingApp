@@ -15,10 +15,34 @@ const { documentLabels } = require('./labels');
 //   panes: [{ paneId, focused, selected, tabs: [{ docId, label, path, dirty, badge }] }],   // panesInOrder
 //   documents: { [docId]: { label, path, docType, dirty, badges, banners } },
 //   splits: { [splitId]: { direction, sizes, available } },   // available: the pixels the sizes share
-//   notice: { message, items: [{ label, reason }] } | null,
+//   notices: [{ kind, message, items: [{ label, reason }], actions: [{ id, label }] }],   // restore first
 // }
 
 const NOTICE_MESSAGE = 'Some documents from your last session could not be opened:';
+const NOTICE_ORDER = ['restore', 'update'];
+
+// The host UI's form of one workspace notice, or null if there is nothing to say.
+function describeNotice(notice) {
+  if (notice.kind === 'restore') {
+    if (notice.failed.length === 0) return null;
+    const labels = documentLabels(notice.failed.map((f) => f.path));
+    return {
+      kind: 'restore',
+      message: NOTICE_MESSAGE,
+      items: notice.failed.map((f) => ({ label: labels.get(f.path), reason: f.reason })),
+      actions: [{ id: 'dismiss', label: 'OK' }],
+    };
+  }
+  if (notice.kind === 'update') {
+    return {
+      kind: 'update',
+      message: `EverythingApp ${notice.version} is ready. It installs when you quit.`,
+      items: [],
+      actions: [{ id: 'restart', label: 'Restart Now' }, { id: 'dismiss', label: 'Later' }],
+    };
+  }
+  return null;
+}
 
 // The rectangle a split covers: the union of its panes' rectangles.
 function splitRects(model, layout) {
@@ -52,8 +76,9 @@ function splitRects(model, layout) {
 }
 
 // documents: the open documents, [{ id, path, docType, status }].
-// notice: { failed: [{ path, reason }] } after a restore, or null.
-function buildUiState({ model, layout, documents, notice, platform }) {
+// notices: the workspace's notices, [{ kind: 'restore', failed: [{ path, reason }] }
+// | { kind: 'update', version }].
+function buildUiState({ model, layout, documents, notices = [], platform }) {
   const labels = documentLabels(documents.map((d) => d.path));
   const byId = new Map();
   const described = {};
@@ -71,14 +96,6 @@ function buildUiState({ model, layout, documents, notice, platform }) {
       return { docId, label: labels.get(d.path), path: d.path, dirty: d.status.dirty, badge };
     }),
   }));
-  let noticeState = null;
-  if (notice && notice.failed.length > 0) {
-    const noticeLabels = documentLabels(notice.failed.map((f) => f.path));
-    noticeState = {
-      message: NOTICE_MESSAGE,
-      items: notice.failed.map((f) => ({ label: noticeLabels.get(f.path), reason: f.reason })),
-    };
-  }
   return {
     layout,
     list: model.list,
@@ -87,7 +104,10 @@ function buildUiState({ model, layout, documents, notice, platform }) {
     panes,
     documents: described,
     splits: splitRects(model, layout),
-    notice: noticeState,
+    notices: [...notices]
+      .sort((a, b) => NOTICE_ORDER.indexOf(a.kind) - NOTICE_ORDER.indexOf(b.kind))
+      .map(describeNotice)
+      .filter(Boolean),
   };
 }
 

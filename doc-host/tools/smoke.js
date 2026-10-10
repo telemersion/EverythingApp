@@ -651,7 +651,7 @@ async function run(dir) {
     assert.deepEqual(second.model.list, workspace.model.list);
     assert.deepEqual(second.win.getBounds(), workspace.win.getNormalBounds(), 'same window bounds');
     assert.equal(second.win.isVisible(), true);
-    assert.equal(second.notice, null);
+    assert.deepEqual(second.notices, []);
   } finally {
     second.dispose();
   }
@@ -695,7 +695,7 @@ async function run(dir) {
       { path: broken, reason: 'no longer follows the document specification' },
       { path: plain, reason: 'not an EverythingApp document' },
     ]);
-    assert.deepEqual(third.notice, { failed });
+    assert.deepEqual(third.notices, [{ kind: 'restore', failed }]);
     assert.equal(third.registry.documents.size, 1, 'the file listed twice opens once');
     assert.deepEqual(layoutOf(third), [{ tabs: [good], selected: good }]);
     assert.equal(third.activeDocument().filePath, good);
@@ -705,7 +705,7 @@ async function run(dir) {
     assert.equal(third.model.list.visible, true);
     await third.hostUi.ready;
     const noticeItems = () => third.hostUi.view.webContents.executeJavaScript(
-      '[...document.querySelectorAll("#notice li")].map((li) => li.textContent)');
+      '[...document.querySelectorAll("#notices li")].map((li) => li.textContent)');
     await until('the host UI shows the notice', async () => (await noticeItems()).length === 3);
     assert.deepEqual(await noticeItems(), [
       'deleted.ev.html — moved or deleted',
@@ -781,7 +781,7 @@ async function run(dir) {
   const intentFrom = (senderId, payload) => ipcMain.emit('ui:intent', { sender: { id: senderId } }, payload);
   intentFrom(todo3.webContentsId, { type: 'close', docId: todo3.id });
   intentFrom(todo3.webContentsId, { type: 'select', docId: doc.id });
-  intentFrom(todo3.webContentsId, { type: 'dismiss-notice' });
+  intentFrom(todo3.webContentsId, { type: 'notice', kind: 'restore', action: 'dismiss' });
   await wait(300);
   assert.equal(workspace.documentById(todo3.id), todo3, 'still open');
   assert.deepEqual(sheets, [], 'not even its close prompt');
