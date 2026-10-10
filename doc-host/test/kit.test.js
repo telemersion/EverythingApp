@@ -258,3 +258,11 @@ test('ordered sorts by sort key, then by id, items without a key last', () => {
     [['c', { order: 'G' }], ['a', { order: 'V' }], ['b', { order: 'V' }], ['z', { order: 'a' }], ['x', {}], ['y', {}]]);
   assert.deepEqual(JSON.parse(JSON.stringify(ordered({ q: { pos: 'b' }, p: { pos: 'a' } }, 'pos'))).map(([id]) => id), ['p', 'q']);
 });
+
+test('the fallback keeps the modules even when the script removes their elements', () => {
+  const script = "\nwindow.testDoc = EvKit.init();\ndocument.getElementById('ev-module-sample').remove();\n";
+  const html = makeDocument({ modules: [SAMPLE_MODULE], script });
+  const window = load(html);
+  assert.equal(window.document.getElementById('ev-module-sample'), null);
+  assert.equal(window.testDoc.toHtml(), html);
+});

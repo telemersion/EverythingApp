@@ -44,7 +44,8 @@
       '</body>\n</html>\n';
   }
 
-  // The module elements come after the kit, so they are read when needed.
+  // The module elements come after the kit: init() reads them, before the
+  // script can change the page.
   function moduleParts() {
     var els = document.querySelectorAll('script[id^="ev-module-"]');
     var parts = [];
@@ -223,6 +224,7 @@
 
     var scriptEl = document.getElementById('ev-script');
     var scriptText = scriptEl ? scriptEl.textContent : '';
+    var modulesInFile = moduleParts();
     var data = JSON.parse(document.getElementById('ev-data').textContent || '{}');
     if (data === null || typeof data !== 'object' || Array.isArray(data)) data = {};
     var getData = typeof options.getData === 'function' ? options.getData : function () { return data; };
@@ -239,7 +241,7 @@
         lang: frame.lang, api: frame.api, docType: frame.docType,
         docTypeVersion: frame.docTypeVersion, docId: frame.docId, title: frame.title,
         style: styleText, manifest: manifestText, data: escapeJson(serialize()),
-        kitVersion: KIT_VERSION, kit: kitText, modules: moduleParts(), script: scriptText
+        kitVersion: KIT_VERSION, kit: kitText, modules: modulesInFile, script: scriptText
       });
     }
 
