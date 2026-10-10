@@ -55,6 +55,16 @@
 | **Library** | The host's list of every copy it knows about, open or not, in two tabs: This computer (the member's copies, arranged in groups) and Team (the team folders on the team server). | Repository list, catalogue, recent files |
 | **Group** | A folder-like container in the Library's This computer tab that arranges copies for this member only; independent of team folders and of where the files are on disk. | Folder (on disk or on the team server), tag, collection |
 | **Close summary** | The one prompt shown when the workspace closes while several documents have unsaved changes: Save all, Review each, Cancel. | Quit dialog |
+| **Notice** | A host message about the whole workspace rather than one document (such as documents that could not be restored, or a host update that is ready), shown at the top of the document list until dismissed. | Banner (that is about one document), toast, notification |
+
+## Distribution
+
+| Term | Definition | Aliases to avoid |
+| --- | --- | --- |
+| **Release** | One published, signed version of the Host that people install or update to, numbered by milestone (0.1.0 at the end of M3). | Build, version (alone: documents and kits have versions too) |
+| **Host update** | Replacing the installed Host with a newer release: downloaded in the background, installed when the Host quits. | Upgrade (reserved for template upgrade), kit update (that changes a document) |
+| **Version store** | The Host's private folder of earlier versions of each document file, kept before every write. | Backups, history (that is the collaboration record), versions folder |
+| **Orphaned store entry** | The version store's entries for a file that is gone from its path on a volume that is reachable; deleted after 90 days. | Orphan (alone), revoked copy (that is a member's file) |
 
 ## Collaboration
 
@@ -119,9 +129,11 @@
 - The **Skill** produces **Documents** that conform to the **Document specification**.
 - **EverythingApp** consists of exactly one **Host**, one **Document specification** and one **Skill**; a **Team** adds one **Team server**.
 - A **Document** "works with **EverythingApp**" exactly when it conforms to the **Document specification**.
-- The **Host** has exactly one **Workspace** (v0.1); it holds one **Document list** and one or more **Panes**.
+- The **Host** has exactly one **Workspace**; it holds one **Document list** and one or more **Panes**.
 - An open **Document** is open exactly once: it has exactly one **Tab**, in exactly one **Pane**, and one entry in the **Document list**.
 - A **Pane** shows one of its **Documents** at a time; the **Active document** is the one shown in the focused **Pane**.
+- A **Host update** never changes a **Document**; a **Kit update** never changes the **Host**.
+- The **Version store** never deletes a document's newest version; entries on a volume that is not mounted are left alone and never become **Orphaned store entries**.
 
 ## Example dialogue
 
@@ -141,4 +153,6 @@
 - "link" was used for the document's identity, not a web address (2026-10-10): resolved. The **Document id** is the identity across all copies; a **Document URL** is the team server's address for it.
 - "team member" was out of scope for v0.1 (single **User**); with collaboration a **Member** is a **User** who belongs to a **Team**.
 - "Document" meant the file itself until collaboration was designed (2026-10-10): resolved. A **Document** is identified by its **Document id**; each file is one **Copy** of it.
+- "update" has three meanings (2026-10-10): **Host update** (a new release of the host), **Kit update** (a document's kit) and, with collaboration, module updates. Always qualify it; "update" alone is ambiguous.
+- "orphaned" was used for version-store entries while "orphan" is an alias to avoid for **Revoked copy** (2026-10-10): resolved. Say **Orphaned store entry** for the version store; a member's file cut off from a team is a **Revoked copy**.
 - "spec" was used both for the product spec (`firstSpec.md`) and for the **Document specification**: use "Document specification" for the contract; call the product document the "product spec".
