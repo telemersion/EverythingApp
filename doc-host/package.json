@@ -1,7 +1,7 @@
 {
   "name": "everythingapp-host",
   "productName": "EverythingApp",
-  "version": "0.1.0",
+  "version": "0.1.0-beta.1",
   "private": true,
   "main": "src/main.js",
   "scripts": {
