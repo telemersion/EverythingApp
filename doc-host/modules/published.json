@@ -1,1 +1,8 @@
-[]
+[
+  {
+    "name": "codemirror",
+    "version": "1.0.0",
+    "file": "codemirror-1.0.0.js",
+    "sha256": "25b36cd722df241bdf19014a61f5d50ad92119df2d7ddb55fd19722b36413339"
+  }
+]

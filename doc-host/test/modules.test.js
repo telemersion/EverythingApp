@@ -54,3 +54,19 @@ test('module lines are checked by name, version, text and order', (t) => {
 test('the published module list loads', () => {
   assert.ok(Array.isArray(require('../modules').MODULES));
 });
+
+test('codemirror 1.0.0 is published and loads in a document', () => {
+  const { JSDOM } = require('jsdom');
+  const { findModule } = require('../modules');
+  const cm = findModule('codemirror', '1.0.0');
+  assert.ok(cm, 'codemirror 1.0.0 is published');
+  assert.match(cm.text.split('\n')[1],
+    /^\/\* EverythingApp module codemirror 1\.0\.0: @codemirror\/state 6\.7\.6, @codemirror\/view 6\.43\.14, @codemirror\/commands 6\.11\.1; built by doc-host\/modules\/build\.js \*\/$/);
+  const html = makeDocument({ modules: [cm], script: "\nwindow.cm = EvKit.module('codemirror', 1);\n" });
+  assert.equal(checkDocument(html).ok, true);
+  const window = new JSDOM(html, { runScripts: 'dangerously', url: 'https://example.test/cm.ev.html' }).window;
+  assert.equal(window.cm.EditorState.create({ doc: 'x' }).doc.toString(), 'x');
+  for (const name of ['EditorState', 'EditorView', 'keymap', 'history', 'defaultKeymap', 'historyKeymap']) {
+    assert.ok(window.cm[name], name);
+  }
+});
