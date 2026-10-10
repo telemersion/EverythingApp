@@ -463,6 +463,9 @@ The idea has a solid lineage; TiddlyWiki with TiddlyDesktop is the closest worki
 | Microsoft HTA | HTML files run as desktop programs by `mshta.exe` | Full system rights made it a malware vector; sandbox strictly |
 | Ink & Switch (malleable and local-first software) | Research on user-owned, adaptable software and data | Ownership and longevity as design goals |
 | Webstrates | Shareable, editable web documents as software | Documents as the unit of software |
+| [Patchwork](https://github.com/inkandswitch/patchwork) (Ink & Switch, 2026) | Local-first platform where documents, tools and their source code are all synced documents; any tool can open any data | A shared tool whose code syncs and runs at once is a supply-chain risk: know who can change the code you run (ADR 0004). Its history slider and drafts inform the collaboration design |
+| [Automerge](https://automerge.org) | CRDT library with a compact format and a sync protocol; the change history is part of the document | Most likely CRDT library for collaboration; history as a feature, not a cost. To verify in the technical tests |
+| [Local-first software](https://www.inkandswitch.com/local-first/) (Kleppmann et al., 2019) | The essay that defined local-first: offline work, ownership, longevity, collaboration | The source of the ownership goal in the collaboration design |
 
 ## Open questions
 
