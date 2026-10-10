@@ -244,12 +244,13 @@ doc-host/
 
 Recorded 2026-10-10 on macOS 26 (arm64), from source.
 
-1. **Unit tests:** 357/357 pass (`npm test`), including the frame, manifest, module, kit 2.0.0 (fallback id, `module`, `newId`, `orderBetween` with 1,000 inserts, `ordered`), write (id written once, never replaced, kit writes, `meta.json`) and fixture tests.
+1. **Unit tests:** 358/358 pass (`npm test`), including the frame, manifest, module, kit 2.0.0 (fallback id, `module`, `newId`, `orderBetween` with 1,000 inserts, `ordered`), write (id written once, never replaced, kit writes, `meta.json`) and fixture tests.
 2. **Smoke test:** passes (`npm run smoke`). New steps: the first save writes the id and nothing else outside the data; the host's own id write causes no reload and no "Updated from disk" (this step found a needless reload, fixed in `Document#save`); later saves keep the id; a reload before the first save keeps the id assigned on open; the kit update 1.9.0 → 2.0.0 also writes the id; a document with `codemirror` 1.0.0 renders an editable editor under the document CSP with no violation.
 3. **Probe:** 25 PASS, exit 0 (`npm run probe`).
-4. **Specification check:** the frame text and the module line in document-spec section 2 equal `buildDocument` output byte for byte.
-5. **Manual check (Task 9, Step 2):** open.
-6. **Release 0.2.0 (Task 9, Step 3):** open.
+4. **Whole-branch review** (a fresh reviewer): Review Focus 1–5 hold; one Important finding fixed before release: kit 2.0.0's fallback read the module elements at save time, so a script that rewrote the page saved a file without its modules; `init()` now reads them once (kit re-pinned, smoke passes again). Seven minors deferred (ledger).
+5. **Specification check:** the frame text and the module line in document-spec section 2 equal `buildDocument` output byte for byte.
+6. **Manual check (Task 9, Step 2):** open.
+7. **Release 0.2.0 (Task 9, Step 3):** open.
 
 ## Spike results
 
