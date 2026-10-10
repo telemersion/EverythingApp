@@ -419,3 +419,19 @@ Recorded 2026-10-10.
 4. **v0.1.0-beta.2** ([release](https://github.com/telemersion/EverythingApp/releases/tag/v0.1.0-beta.2)), with the fix: Help → Check for Updates… on the running beta.1 reported the download; the notice "EverythingApp 0.1.0-beta.2 is ready. It installs when you quit." appeared; with an unsaved document, Restart Now showed the save prompt and Cancel kept everything open with the notice; Restart Now again with Save quit, installed and came back on 0.1.0-beta.2 with the workspace restored (the user, 2026-10-10).
 
 ## Acceptance results (filled in by Task 12)
+
+Walked through on 2026-10-10 with the user at the keyboard (macOS 26, arm64), on installed releases from `telemersion/EverythingApp`. Test files in `/tmp/ev-accept/`.
+
+1. **Pass.** `v0.1.0-beta.1` and `v0.1.0-beta.2`: `release.yml` built signed, notarised DMG and ZIP (x64, arm64) and the Windows installer, the packaged probe passed on both platforms, and the release holds the update files (Beta results 1, 4).
+2. **Pass.** Installed from the browser-downloaded DMG: only macOS's usual "downloaded from the Internet" question; the app is `accepted, source=Notarized Developer ID`, stapled (Beta results 2, 3).
+3. **Open.** No Windows machine at hand. The Windows release build, its unit tests, probe, smoke and packaged probe pass in CI; installing without administrator rights and quitting on Windows are not checked by hand.
+4. **Pass.** Started from the DMG, the host offered Move to Applications and came back from `/Applications`; the error sheet seen after the move in beta.1 is fixed (7e36211) and did not return.
+5. **Pass, one part pending.** beta.1 → beta.2: notice, Restart Now through the save prompt (Cancel kept everything), install, restart with the workspace restored (Beta results 4). That a plain quit also installs is checked with the 0.1.0 release.
+6. **Pass.** Help → Check for Updates… on beta.2: "You're up to date. EverythingApp 0.1.0-beta.2 is the newest version."; offline: the error sheet "EverythingApp could not check for updates." (`net::ERR_INTERNET_DISCONNECTED`) with Copy report; `npm start`: "Updates are only available in installed builds."
+7. **Pass.** Help → Use EverythingApp for HTML Documents… showed the steps; EverythingApp was listed under Open With; after Change All, a double-click on `ACCEPT-hours.ev.html` opened it as a tab and a double-click on `ACCEPT-plain-page.html` opened it once in the browser, without a loop; dropping `ACCEPT-plain-page.html` on the window showed the "not an EverythingApp document" sheet.
+8. **Pass.** The beta.2 release run's probes, from source and packaged, on macOS and Windows: `host UI loads`, `other names do not resolve`, `update host resolves`.
+9. **Pass.** `@electron/fuses read` on the installed `/Applications/EverythingApp.app` (0.1.0-beta.2): RunAsNode, EnableNodeOptionsEnvironmentVariable and EnableNodeCliInspectArguments disabled, EnableEmbeddedAsarIntegrityValidation and OnlyLoadAppFromAsar enabled.
+10. **Pass.** Unit tests (`cleanup.test.js`) cover marking, unmarking, unreachable volumes, 90 days, the cap and newest versions. The user's real store after the first runs: the five entries whose `/tmp` test files are gone are marked orphaned, every existing file is live, nothing was removed. An unplugged volume was not tried by hand (the repository itself lives on the external volume).
+11. **Pass.** `ACCEPT-needs-api-2.ev.html` was refused with Check for Updates, Copy report and OK; Check for Updates answered "You're up to date".
+12. **Pass.** The code is in `telemersion/EverythingApp` with its full history (`main` fast-forwarded from PR #1); `maybites/EverythingApp` is archived and points to it.
+13. **Pass.** CI (`ci.yml`) and both release runs: unit tests, probe and smoke on macOS and Windows.

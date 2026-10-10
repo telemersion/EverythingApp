@@ -34,7 +34,7 @@ The single-user host (M1–M3) is a tool for one user. Team use is an explicit l
 
 Acceptance criteria:
 
-- [ ] Double-clicking a document file (or dropping it on the host) opens it in the host and selects it in the document list. *(M1: drag and drop and command line; M2, 2026-10-09: opens as a tab in the focused pane, selected in the tab strip and the document list; double-click with M3, once EverythingApp is the default for HTML, and Open With)*
+- [x] Double-clicking a document file (or dropping it on the host) opens it in the host and selects it in the document list. *(M1: drag and drop and command line; M2, 2026-10-09: opens as a tab in the focused pane, selected in the tab strip and the document list; M3, 2026-10-10: double-click on an installed 0.1.0-beta.2 once EverythingApp is the default for HTML, and Open With.)*
 - [x] The document renders exactly as it does in Chrome. *(M1, 2026-10-06: hours sheet captured at 1100×768 @2x in headless Chrome and the host; identical layout and computed colours, apart from the Save button, status line and save hint, which the document shows only in the browser. The host capture is tagged with the display profile; converted to sRGB it matches Chrome to the pixel except text anti-aliasing.)*
 - [x] Ctrl/Cmd+S and File → Save write the current data into the opened file. No dialog appears. The document shows no Save button of its own while running in the host. *(M1, 2026-10-07: manual check — Cmd+S and File → Save wrote without a dialog, the dirty marker cleared, only the data block changed on disk; no Save button in the host.)*
 - [x] After saving, reopening the file shows the new rows.
@@ -492,17 +492,11 @@ Facts established during the design review. Carry them over when this spec is sp
 
 | Fact | Explains | Destination |
 | --- | --- | --- |
-| On macOS, Electron's auto-update (Squirrel.Mac) only works for signed and notarised apps. | Signed installers in M3 | `docs/architecture/distribution.md` (M3) |
-| Chromium's `host-resolver-rules` apply to the whole app; a session cannot have rules of its own. | Exact update host names, no wildcards | `docs/architecture/distribution.md` (M3) |
-| An app started from its DMG or from a quarantined Downloads folder runs from a read-only random location (App Translocation), where Squirrel.Mac cannot install updates. | Move to Applications at start | `docs/architecture/distribution.md` (M3) |
-| Neither macOS nor Windows 10 and later lets an app make itself the default handler of a file type; macOS also cannot tell `.ev.html` from `.html`. | Registering as a possible handler only | `docs/architecture/distribution.md` (M3) |
-| Since June 2023, certificate authorities issue code-signing keys only on hardware or a cloud HSM, so a newly bought Windows certificate cannot be exported into a CI secret. | Windows unsigned for now | `docs/guides/releasing.md` (M3) |
-| GitHub repository secrets cannot be read back; the Apple secrets were entered again for `telemersion/EverythingApp`. | Secrets setup | `docs/guides/releasing.md` (M3) |
 | The host identifies a document by its real file path: the registry looks documents up by path (`open.js`), and the version store names its folders after a hash of the absolute path (`write.js`). Collaboration changes this to "identified by document id, found at a path". | Copy registry, history cache and member settings keyed by document id | Architecture document (when the format groundwork starts) |
 | Host API v1 is pull-only: the host asks for the whole data as a JSON snapshot on save (`preload.js`) and never pushes data into a document. | Snapshot comparison for merging; push of merged data and patches in Host API v2 | Architecture document (when the format groundwork starts) |
 | On an outside change the host reloads a clean document and shows a banner on a dirty one (`document.js`, external-change handling). Collaboration reuses this path, with an automatic merge in place of the "Keep mine / Take the version on disk" choice. | Incoming changes while a document is open | Architecture document (when collaboration starts) |
 
-Carried over: the CRLF and `beforeunload` facts now live in [docs/document-spec.md](docs/document-spec.md) (rules 4 and 5).
+Carried over: the CRLF and `beforeunload` facts now live in [docs/document-spec.md](docs/document-spec.md) (rules 4 and 5). The M3 facts (Squirrel.Mac and signing, resolver rules, App Translocation, default handlers, Windows code-signing keys, GitHub secrets) live in [docs/architecture/distribution.md](docs/architecture/distribution.md) and [docs/guides/releasing.md](docs/guides/releasing.md).
 
 ## Code session plan
 
@@ -554,4 +548,4 @@ M1 tasks, in order:
 10. Adapt `hours-sheet.html` to the specification (frame, sections, kit, `ev` names, no own Save button under the host) and use it as the first fixture.
 11. Walk through the acceptance criteria in the user story.
 
-M1 passed its acceptance criteria on 2026-10-07. M2 passed its acceptance walk-through on 2026-10-09, results in [docs/plans/m2-workspace.md](docs/plans/m2-workspace.md); M3 was designed on 2026-10-10, plan in [docs/plans/m3-distribution.md](docs/plans/m3-distribution.md).
+M1 passed its acceptance criteria on 2026-10-07. M2 passed its acceptance walk-through on 2026-10-09, results in [docs/plans/m2-workspace.md](docs/plans/m2-workspace.md); M3 passed its acceptance walk-through on 2026-10-10 (Windows by hand still open), results in [docs/plans/m3-distribution.md](docs/plans/m3-distribution.md).
