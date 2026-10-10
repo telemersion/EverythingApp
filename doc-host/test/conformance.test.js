@@ -127,3 +127,20 @@ test('formatReport heading names the situation', () => {
   assert.doesNotMatch(formatReport('/tmp/a.ev.html', errors, { context: 'open-document' }), /could not open/);
   assert.throws(() => formatReport('/tmp/a.ev.html', errors, { context: 'nope' }), /Unknown report context/);
 });
+
+test('the document id is empty or 32 lowercase hex characters', () => {
+  assert.equal(checkDocument(makeDocument({ docId: '' })).ok, true);
+  assert.equal(checkDocument(makeDocument({ docId: '0123456789abcdef0123456789abcdef' })).ok, true);
+  for (const docId of ['ABC', 'A'.repeat(32), 'a'.repeat(33)]) {
+    const { errors } = checkDocument(makeDocument({ docId }));
+    assert.deepEqual(errors.map((e) => e.code), ['field'], docId);
+    assert.match(errors[0].message, /docId/);
+  }
+});
+
+test('manifest problems are reported with their codes, and a valid manifest is returned', () => {
+  assert.deepEqual(codes(makeDocument({ manifest: '{"textfields":[]}' })), ['manifest-key']);
+  assert.deepEqual(codes(makeDocument({ manifest: '{"textFields":["a..b"]}' })), ['manifest-invalid']);
+  assert.deepEqual(checkDocument(makeDocument({ manifest: '{"textFields":["rows.*.note"]}' })).manifest,
+    { textFields: ['rows.*.note'] });
+});

@@ -2,6 +2,7 @@
 
 const path = require('node:path');
 const { parseDocument, lineOf } = require('./frame');
+const { checkManifest } = require('./manifest');
 const { findKit, sha256, MAX_API_VERSION } = require('../kit');
 
 // The value may not contain quotes, so the kit's own source (which builds
@@ -12,6 +13,7 @@ const FIELD_RULES = {
   lang: [/^[A-Za-z]{2,3}(-[A-Za-z0-9]+)*$/, 'a language tag such as "en" or "de-CH"'],
   docType: [/^[a-z0-9]+(-[a-z0-9]+)*$/, 'lowercase words joined by "-", such as "hours-sheet"'],
   docTypeVersion: [/^\d+(\.\d+)*$/, 'a version such as "1.0"'],
+  docId: [/^([0-9a-f]{32})?$/, 'empty or 32 lowercase hex characters'],
   title: [/^[^<&\n]*$/, 'plain text without "<", "&" or line breaks'],
   kitVersion: [/^\d+\.\d+\.\d+$/, 'a kit version such as "1.0.0"'],
 };
@@ -38,7 +40,7 @@ function preview(text) {
 
 // Checks a file against the document specification. Takes the file's bytes
 // (as read from disk) or its text.
-// Returns { ok, errors: [{ code, message, line? }], text?, parts?, api? };
+// Returns { ok, errors: [{ code, message, line? }], text?, parts?, api?, manifest? };
 // text is the decoded file.
 function checkDocument(input) {
   let html = input;
@@ -101,6 +103,9 @@ function checkDocument(input) {
     errors.push(problem('kit-api', `Kit ${kit.version} belongs to API v${kit.api}, but the document declares API v${parts.api}.`));
   }
 
+  const manifest = checkManifest(parts.manifest);
+  errors.push(...manifest.errors);
+
   if (parts.data.includes('<')) {
     errors.push(problem('data-escape', 'The data block contains "<". Write every "<" in the data as \\u003c.'));
   }
@@ -118,7 +123,7 @@ function checkDocument(input) {
     errors.push(problem('script-comment', 'The script section contains "<!--", which changes how browsers parse it. Write "<\\!--" instead.'));
   }
 
-  return { ok: errors.length === 0, errors, text: html, parts, api: Number(parts.api) };
+  return { ok: errors.length === 0, errors, text: html, parts, api: Number(parts.api), manifest: manifest.manifest };
 }
 
 // The text shown in the refusal dialog and copied by "Copy report".
