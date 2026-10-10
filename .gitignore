@@ -2,3 +2,6 @@ node_modules/
 .DS_Store
 *.tmp
 dist/
+
+# Claude Code permission rules hold local paths
+.claude/settings.json
