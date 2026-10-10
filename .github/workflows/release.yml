@@ -1,0 +1,162 @@
+name: Release
+
+# A v* tag builds, signs and publishes a release, after the same checks as CI
+# and the escape probe against the packaged app. Follows Telemersive Gateway
+# (telemersion/telemersive-portbay); see docs/guides/releasing.md.
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-mac:
+    runs-on: macos-latest
+    defaults:
+      run:
+        working-directory: doc-host
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: doc-host/package-lock.json
+
+      - name: Check that the tag matches package.json
+        run: node -e "const v = 'v' + require('./package.json').version; if (process.env.GITHUB_REF_NAME !== v) { console.error('Tag ' + process.env.GITHUB_REF_NAME + ' does not match package.json ' + v); process.exit(1); }"
+
+      - run: npm ci
+
+      - run: npm test
+
+      - name: Escape probe
+        run: npm run probe
+        env:
+          EV_PROBE_NETWORK: '1'
+
+      - name: Smoke test
+        run: npm run smoke
+
+      - name: Import signing certificate into a dedicated keychain
+        env:
+          CSC_LINK: ${{ secrets.APPLE_CERTIFICATE }}
+          CSC_KEY_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          KEYCHAIN_PATH="$RUNNER_TEMP/app-signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(uuidgen)"
+          CERT_PATH="$RUNNER_TEMP/certificate.p12"
+
+          echo -n "$CSC_LINK" | base64 --decode -o "$CERT_PATH"
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+          security import "$CERT_PATH" -P "$CSC_KEY_PASSWORD" -A \
+            -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+          security list-keychain -d user -s "$KEYCHAIN_PATH" login.keychain
+
+          echo "CSC_KEYCHAIN=$KEYCHAIN_PATH" >> "$GITHUB_ENV"
+          rm -f "$CERT_PATH"
+
+      - name: Build, sign and notarise (macOS)
+        run: npm run package -- --mac --publish never
+        env:
+          CSC_KEYCHAIN: ${{ env.CSC_KEYCHAIN }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+
+      - name: Escape probe against the packaged app
+        run: npm run packaged-probe
+        env:
+          EV_PROBE_NETWORK: '1'
+
+      # Every update file: a pre-release writes beta-mac.yml, not latest-mac.yml.
+      - name: Upload macOS artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: mac-dist
+          path: |
+            doc-host/dist/*.dmg
+            doc-host/dist/*.zip
+            doc-host/dist/*.blockmap
+            doc-host/dist/*.yml
+            !doc-host/dist/builder-debug.yml
+
+  build-win:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: doc-host
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: doc-host/package-lock.json
+
+      - name: Check that the tag matches package.json
+        run: node -e "const v = 'v' + require('./package.json').version; if (process.env.GITHUB_REF_NAME !== v) { console.error('Tag ' + process.env.GITHUB_REF_NAME + ' does not match package.json ' + v); process.exit(1); }"
+
+      - run: npm ci
+
+      - run: npm test
+
+      - name: Escape probe
+        run: npm run probe
+        env:
+          EV_PROBE_NETWORK: '1'
+
+      - name: Smoke test
+        run: npm run smoke
+
+      # Unsigned for now: see docs/guides/releasing.md, "Windows signing".
+      - name: Build (Windows)
+        run: npm run package -- --win --publish never
+
+      - name: Escape probe against the packaged app
+        run: npm run packaged-probe
+        env:
+          EV_PROBE_NETWORK: '1'
+
+      - name: Upload Windows artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: win-dist
+          path: |
+            doc-host/dist/*.exe
+            doc-host/dist/*.blockmap
+            doc-host/dist/*.yml
+            !doc-host/dist/builder-debug.yml
+
+  release:
+    needs: [build-mac, build-win]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download macOS artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: mac-dist
+          path: dist
+
+      - name: Download Windows artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: win-dist
+          path: dist
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
+          prerelease: ${{ contains(github.ref_name, '-') }}

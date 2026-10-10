@@ -1,0 +1,42 @@
+name: CI
+
+# Unit tests, the escape probe and the smoke test on every push to main and
+# every pull request, on both platforms EverythingApp ships for.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: doc-host
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: doc-host/package-lock.json
+
+      - run: npm ci
+
+      - run: npm test
+
+      - name: Escape probe
+        run: npm run probe
+        env:
+          EV_PROBE_NETWORK: '1'
+
+      - name: Smoke test
+        run: npm run smoke
