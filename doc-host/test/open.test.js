@@ -47,6 +47,13 @@ test('readDocumentFile classifies files', async () => {
   assert.match(refused.report, /^EverythingApp could not open broken\.ev\.html\.\n/);
   assert.ok(refused.report.includes(`File: ${broken}`), 'the report names the file');
   assert.ok(refused.report.includes('[field]'), 'the report lists the problem');
+  assert.deepEqual(refused.codes, ['field']);
+
+  const newer = path.join(dir, 'newer.ev.html');
+  await fs.writeFile(newer, makeDocument({ api: '99' }));
+  const tooNew = await readDocumentFile(newer);
+  assert.equal(tooNew.kind, 'refused');
+  assert.deepEqual(tooNew.codes, ['api-newer']);
 
   const missing = path.join(dir, 'gone.ev.html');
   const error = await readDocumentFile(missing);

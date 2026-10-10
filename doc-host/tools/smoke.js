@@ -24,6 +24,8 @@ const { parseDocument, buildDocument } = require('../src/frame');
 const { pathKey } = require('../src/write');
 const { findKit } = require('../kit');
 const { describeStatus } = require('../src/status');
+const { createUpdates } = require('../src/updates');
+const { EventEmitter } = require('node:events');
 
 registerSchemePrivileges();
 // Keep running if a step closes a window, so its assertion can report it.
@@ -1133,6 +1135,52 @@ async function run(dir) {
   answer(1);
   await workspace.closeDocument(note.id);
   assert.equal(note.disposed, true);
+
+  step('a downloaded host update becomes a notice; Restart Now goes through the close summary');
+  // The last step: a confirmed quit disposes the workspace. The updater and
+  // the app are fakes; workspace.exit goes through hostUpdates.exit as in main.js.
+  const calls = [];
+  const fakeUpdater = new EventEmitter();
+  fakeUpdater.checkForUpdates = async () => ({});
+  fakeUpdater.quitAndInstall = (isSilent, isForceRunAfter) => calls.push(['quitAndInstall', isSilent, isForceRunAfter]);
+  const hostUpdates = createUpdates({
+    updater: fakeUpdater,
+    app: { getVersion: () => '0.1.0', isInApplicationsFolder: () => true, relaunch: () => calls.push('relaunch'), exit: (code) => calls.push(['exit', code]) },
+    workspace,
+    log: { write: async () => {} },
+    dialog: null,
+    packaged: true,
+    platform: process.platform,
+    probe: false,
+  });
+  workspace.exit = (options) => hostUpdates.exit(options);
+  workspace.onNoticeAction = (kind, action) => hostUpdates.noticeAction(kind, action);
+  for (const d of workspace.openDocuments()) assert.equal(await d.save(), true);
+  const updPaths = ['update-a.ev.html', 'update-b.ev.html'].map((n) => path.join(dir, n));
+  for (const p of updPaths) {
+    await fs.copyFile(fixture('hours-sheet'), p);
+    await addRowTo(await openDoc(p), `${path.basename(p)} dirty`);
+  }
+  fakeUpdater.emit('update-downloaded', { version: '0.2.0' });
+  assert.deepEqual(workspace.notices, [{ kind: 'update', version: '0.2.0' }]);
+  assert.equal(workspace.model.list.visible, true, 'the list shows the notice');
+  const updNotice = () => workspace.hostUi.view.webContents.executeJavaScript(
+    '[...document.querySelectorAll("#notices section")].map((s) => [s.querySelector("p").textContent, [...s.querySelectorAll("button")].map((b) => b.textContent)])');
+  await until('the host UI shows the update notice', async () => (await updNotice()).length === 1);
+  assert.deepEqual(await updNotice(), [['EverythingApp 0.2.0 is ready. It installs when you quit.', ['Restart Now', 'Later']]]);
+  answer(2); // Cancel in the close summary
+  hostUpdates.noticeAction('update', 'restart');
+  await until('the close summary was asked', () => sheets.length === 1);
+  await workspace.quitting;
+  assert.equal(sheets[0].message, 'Do you want to save the changes to 2 documents?');
+  assert.deepEqual(calls, [], 'cancelled: nothing installs');
+  assert.equal(workspace.openDocuments().filter((d) => d.isDirty).length, 2, 'nothing closed');
+  assert.deepEqual(workspace.notices, [{ kind: 'update', version: '0.2.0' }], 'the notice stays');
+  answer(0); // Save all
+  await workspace.quit({ restart: true });
+  assert.deepEqual(calls, [['quitAndInstall', true, true]], 'the update installs and the host restarts');
+  const rowsBefore = (await dataOf(fixture('hours-sheet'))).rows.length;
+  for (const p of updPaths) assert.equal((await dataOf(p)).rows.length, rowsBefore + 1, 'saved first');
 
   step('all checks passed');
 }

@@ -74,7 +74,14 @@ class Workspace {
     this.layout = null;          // the last computeLayout()
     this.menu = null;            // the application menu, if one is installed (menu.js)
     this.notices = [];           // workspace notices (restore failures, a ready host update), shown until dismissed
-    this.onNoticeAction = () => {}; // (kind, action) for actions other than dismiss (main.js sets it)
+    this.onNoticeAction = () => {}; // (kind, action) for every notice button (main.js sets it)
+    this.checkForUpdates = async () => {}; // Help → Check for Updates… (main.js sets it)
+    this.showLog = async () => {};        // Help → Show Log (main.js sets it)
+    // The end of a confirmed quit; main.js replaces it so a ready update installs.
+    this.exit = ({ restart = false } = {}) => {
+      if (restart) app.relaunch();
+      app.exit(0);
+    };
     this.docTypes = new WeakMap(); // Document → { html, docType } of its running page
     this.prompting = false;      // a sheet is open
     this.restoring = false;
@@ -188,6 +195,18 @@ class Workspace {
         detail: 'EverythingApp opens HTML documents that contain <meta name="ev-host-api">.',
         buttons: ['OK'],
       });
+    } else if ((result.codes || []).includes('api-newer')) {
+      // A document for a newer host: the update check may bring one.
+      const choice = await this.sheet({
+        type: 'warning',
+        message: `EverythingApp refused to open ${name}.`,
+        detail: result.report,
+        buttons: ['Check for Updates', 'Copy report', 'OK'],
+        defaultId: 0,
+        cancelId: 2,
+      });
+      if (choice === 0) await this.checkForUpdates();
+      if (choice === 1) clipboard.writeText(result.report);
     } else {
       const choice = await this.sheet({
         type: 'warning',
@@ -488,7 +507,7 @@ class Workspace {
           break;
         case 'notice':
           if (intent.action === 'dismiss') this.removeNotice(intent.kind);
-          else this.onNoticeAction(intent.kind, intent.action);
+          this.onNoticeAction(intent.kind, intent.action);
           break;
         case 'move-tab':
           if (doc) this.applyAndFocus(wm.moveTab(this.model, intent.docId, intent.paneId, intent.index));
@@ -623,18 +642,19 @@ class Workspace {
     return false;
   }
 
-  // Close Window, Quit: the close summary, then workspace.json, then exit.
-  // A second request while one runs joins it. Never rejects.
-  quit() {
+  // Close Window, Quit, Restart Now (restart: the host starts again): the
+  // close summary, then workspace.json, then exit. A second request while one
+  // runs joins it. Never rejects.
+  quit({ restart = false } = {}) {
     if (!this.quitting) {
-      this.quitting = this.runQuit()
+      this.quitting = this.runQuit({ restart })
         .catch((err) => this.showError({ action: 'quit', err }))
         .finally(() => { this.quitting = null; });
     }
     return this.quitting;
   }
 
-  async runQuit() {
+  async runQuit({ restart }) {
     if (!(await this.confirmCloseAll())) return;
     this.quitConfirmed = true;
     try {
@@ -643,7 +663,7 @@ class Workspace {
       await this.showError({ action: 'save the workspace to', filePath: this.workspaceFile, err });
     }
     this.dispose();
-    app.exit(0);
+    this.exit({ restart });
   }
 
   // Closes every document, the host UI and the window, without asking.

@@ -1,6 +1,7 @@
 'use strict';
 
-const { Menu, shell } = require('electron');
+const { app, Menu, shell } = require('electron');
+const { htmlAssociationSheet, aboutSheet } = require('./help');
 const wm = require('./workspace-model');
 
 // Docked DevTools would sit inside the view's own bounds (the host UI lies beneath the documents).
@@ -95,6 +96,24 @@ function buildMenu({ workspace, isDev }) {
             click: () => workspace.focusNeighbour(side.toLowerCase()),
           })),
         },
+      ],
+    },
+    {
+      label: 'Help',
+      role: 'help',
+      submenu: [
+        { label: 'Check for Updates…', click: () => run('check for updates', () => workspace.checkForUpdates()) },
+        {
+          label: 'Use EverythingApp for HTML Documents…',
+          click: () => run('show how to use EverythingApp for HTML documents', () => workspace.sheet({ type: 'info', ...htmlAssociationSheet(process.platform) })),
+        },
+        { label: 'Show Log', click: () => run('show the log', () => workspace.showLog()) },
+        ...(isMac ? [] : [{
+          label: 'About EverythingApp',
+          click: () => run('show About', () => workspace.sheet({
+            type: 'info', ...aboutSheet({ version: app.getVersion(), electron: process.versions.electron }),
+          })),
+        }]),
       ],
     },
   ];

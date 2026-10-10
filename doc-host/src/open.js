@@ -9,7 +9,7 @@ const MAX_FILE_BYTES = 60 * 1024 * 1024;
 // Reads a file the user wants to open and says what it is. Never throws.
 //   { kind: 'document', filePath, check }      conforming; check.text and check.parts feed the Document
 //   { kind: 'not-document', filePath }          no <meta name="ev-host-api">
-//   { kind: 'refused', filePath, report }       a document that does not conform
+//   { kind: 'refused', filePath, report, codes }  a document that does not conform (codes: its problems' codes)
 //   { kind: 'error', filePath: rawPath, message, code }   could not be read (code: err.code, e.g. 'ENOENT')
 // filePath is the real path: documents are compared by it (registry.byPath).
 async function readDocumentFile(rawPath) {
@@ -29,7 +29,9 @@ async function readDocumentFile(rawPath) {
   }
   if (!isDocument(bytes)) return { kind: 'not-document', filePath };
   const check = checkDocument(bytes);
-  if (!check.ok) return { kind: 'refused', filePath, report: formatReport(filePath, check.errors) };
+  if (!check.ok) {
+    return { kind: 'refused', filePath, report: formatReport(filePath, check.errors), codes: check.errors.map((e) => e.code) };
+  }
   return { kind: 'document', filePath, check };
 }
 

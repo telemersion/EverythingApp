@@ -1,7 +1,8 @@
 'use strict';
 
 const path = require('node:path');
-const { app, Menu, session } = require('electron');
+const { app, Menu, dialog, session, shell } = require('electron');
+const { autoUpdater } = require('electron-updater');
 const { registerSchemePrivileges } = require('./protocol');
 const { registerIpc } = require('./ipc');
 const { Workspace } = require('./workspace');
@@ -11,6 +12,7 @@ const { isolateUserData, attachProbe } = require('./probe');
 const { hostResolverRules, mainProbeChecks } = require('./resolver-rules');
 const { createHostLog } = require('./host-log');
 const { runCleanup } = require('./cleanup');
+const { createUpdates } = require('./updates');
 
 app.setName('EverythingApp');
 // No names resolve but the update hosts: documents could leak data through
@@ -77,11 +79,43 @@ if (!app.requestSingleInstanceLock()) {
   app.whenReady().then(async () => {
     const userData = app.getPath('userData');
     const log = createHostLog(path.join(userData, 'logs', 'host.log'));
+    const probe = Boolean(process.env.EV_PROBE);
+    autoUpdater.logger = {
+      info: () => {},
+      warn: (message) => log.write(`updater: ${message}`),
+      error: (message) => log.write(`updater: ${message}`),
+    };
+    // The workspace is made after the Move to Applications offer: a move
+    // relaunches the host, and quitting must not write an empty workspace.json.
+    const updates = createUpdates({
+      updater: autoUpdater,
+      app,
+      dialog,
+      log,
+      packaged: app.isPackaged,
+      platform: process.platform,
+      probe,
+      workspace: {
+        setNotice: (notice) => workspace.setNotice(notice),
+        removeNotice: (kind) => workspace.removeNotice(kind),
+        sheet: (options) => workspace.sheet(options),
+        showError: (args) => workspace.showError(args),
+        quit: (options) => workspace.quit(options),
+      },
+    });
+    await updates.offerMove();
     workspace = new Workspace({
       storeDir: path.join(userData, 'versions'),
       workspaceFile: path.join(userData, 'workspace.json'),
       allowDevTools: !app.isPackaged,
     });
+    workspace.exit = (options) => updates.exit(options);
+    workspace.onNoticeAction = (kind, action) => updates.noticeAction(kind, action);
+    workspace.checkForUpdates = () => updates.checkNow();
+    workspace.showLog = async () => {
+      await log.write('log shown');
+      shell.showItemInFolder(log.file);
+    };
     workspace.menu = buildMenu({ workspace, isDev: !app.isPackaged });
     Menu.setApplicationMenu(workspace.menu);
     registerIpc({ workspace });
@@ -92,7 +126,8 @@ if (!app.requestSingleInstanceLock()) {
     }
     started = true;
     // Background work nobody asked for: never a sheet, only the host log.
-    if (!process.env.EV_PROBE) {
+    updates.start();
+    if (!probe) {
       runCleanup({
         storeDir: path.join(userData, 'versions'),
         openPaths: new Set(workspace.openDocuments().map((doc) => doc.filePath)),
