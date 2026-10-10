@@ -96,10 +96,13 @@ function createUpdates({ updater, app, workspace, log, dialog, packaged, platfor
       app.exit(0);
     },
 
-    // macOS: before the workspace is restored, offers to move the host to
+    // macOS: before the workspace exists, offers to move the host to
     // Applications, the only place updates can install (App Translocation).
+    // Resolves true once moved: this instance then ends and the moved one
+    // starts, so the caller must not go on starting up (a workspace made now
+    // would be torn down half-loaded).
     async offerMove() {
-      if (platform !== 'darwin' || !packaged || probe || app.isInApplicationsFolder()) return;
+      if (platform !== 'darwin' || !packaged || probe || app.isInApplicationsFolder()) return false;
       const { response } = await dialog.showMessageBox({
         type: 'question',
         message: 'Move EverythingApp to the Applications folder?',
@@ -108,11 +111,12 @@ function createUpdates({ updater, app, workspace, log, dialog, packaged, platfor
         defaultId: 0,
         cancelId: 1,
       });
-      if (response !== 0) return;
+      if (response !== 0) return false;
       try {
-        app.moveToApplicationsFolder(); // relaunches from there
+        return app.moveToApplicationsFolder() === true; // true: quits and relaunches from there
       } catch (err) {
         await log.write('moving to Applications failed', err);
+        return false;
       }
     },
   };

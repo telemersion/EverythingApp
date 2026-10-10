@@ -199,7 +199,7 @@ test('the ready sheet\'s Restart Now restarts', async () => {
 test('Move to Applications: offered on darwin outside Applications', async () => {
   const f = fakes({ inApplications: false });
   f.dialog.answer = 0;
-  await make(f).offerMove();
+  assert.equal(await make(f).offerMove(), true, 'moved: the caller stops starting up');
   assert.equal(f.sheets[0].message, 'Move EverythingApp to the Applications folder?');
   assert.equal(f.sheets[0].detail, 'Updates only work from there.');
   assert.deepEqual(f.sheets[0].buttons, ['Move', 'Not Now']);
@@ -208,7 +208,7 @@ test('Move to Applications: offered on darwin outside Applications', async () =>
 
 test('Move to Applications: Not Now, already there, or not macOS', async () => {
   const notNow = fakes({ inApplications: false });
-  await make(notNow).offerMove();
+  assert.equal(await make(notNow).offerMove(), false);
   assert.deepEqual(notNow.calls, []);
   const there = fakes({ inApplications: true });
   await make(there).offerMove();
@@ -222,6 +222,13 @@ test('a failing move is logged and the start goes on', async () => {
   const f = fakes({ inApplications: false });
   f.dialog.answer = 0;
   f.app.moveToApplicationsFolder = () => { throw new Error('read-only'); };
-  await make(f).offerMove();
+  assert.equal(await make(f).offerMove(), false);
   assert.deepEqual(f.logged, ['moving to Applications failed: read-only']);
+});
+
+test('a move that does not happen lets the start go on', async () => {
+  const f = fakes({ inApplications: false });
+  f.dialog.answer = 0;
+  f.app.moveToApplicationsFolder = () => false;
+  assert.equal(await make(f).offerMove(), false);
 });

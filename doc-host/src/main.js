@@ -38,11 +38,18 @@ if (!app.requestSingleInstanceLock()) {
     const doc = await workspace.open(p, { source: 'os' });
     if (doc && process.env.EV_PROBE && !probeAttached) {
       probeAttached = true;
+      const hostUiLoads = workspace.hostUi.ready.then(
+        () => ['[probe] PASS host UI loads'],
+        (err) => [`[probe] FAIL host UI loads (${err.message})`],
+      );
       attachProbe(doc, {
-        mainChecks: mainProbeChecks({
-          resolveHost: (name) => session.defaultSession.resolveHost(name),
-          expectNetwork: process.env.EV_PROBE_NETWORK === '1',
-        }),
+        mainChecks: Promise.all([
+          hostUiLoads,
+          mainProbeChecks({
+            resolveHost: (name) => session.defaultSession.resolveHost(name),
+            expectNetwork: process.env.EV_PROBE_NETWORK === '1',
+          }),
+        ]).then((lines) => lines.flat()),
       });
     }
   }
@@ -106,7 +113,8 @@ if (!app.requestSingleInstanceLock()) {
         quit: (options) => workspace.quit(options),
       },
     });
-    await updates.offerMove();
+    // Moved: this instance quits and the one in Applications starts instead.
+    if (await updates.offerMove()) return;
     workspace = new Workspace({
       storeDir: path.join(userData, 'versions'),
       workspaceFile: path.join(userData, 'workspace.json'),
