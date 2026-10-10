@@ -6,44 +6,49 @@ const { sha256 } = require('../src/hash');
 
 // Published kits never change. published.json pins each kit file's hash;
 // loading fails loudly if a published kit file was edited.
-const PUBLISHED = require('./published.json');
-
 // The kit section of a document is a newline followed by the kit file.
-function kitSectionText(file) {
-  return '\n' + fs.readFileSync(path.join(__dirname, file), 'utf8');
+function kitSectionText(file, dir = __dirname) {
+  return '\n' + fs.readFileSync(path.join(dir, file), 'utf8');
 }
 
-const KITS = PUBLISHED.map((entry) => {
-  const text = kitSectionText(entry.file);
-  const hash = sha256(text);
-  if (hash !== entry.sha256) {
-    throw new Error(`Published kit ${entry.version} was modified (${entry.file}). Publish a new kit version instead.`);
+// A registry of kits from a list like published.json, files read from dir.
+function createKitRegistry(list, dir) {
+  const KITS = list.map((entry) => {
+    const text = kitSectionText(entry.file, dir);
+    const hash = sha256(text);
+    if (hash !== entry.sha256) {
+      throw new Error(`Published kit ${entry.version} was modified (${entry.file}). Publish a new kit version instead.`);
+    }
+    return Object.freeze({ version: entry.version, api: entry.api, text, hash });
+  });
+
+  const MAX_API_VERSION = Math.max(...KITS.map((k) => k.api));
+
+  function findKit(version) {
+    return KITS.find((k) => k.version === version) || null;
   }
-  return Object.freeze({ version: entry.version, api: entry.api, text, hash });
-});
 
-const MAX_API_VERSION = Math.max(...KITS.map((k) => k.api));
+  // The newest published kit of an API version, or null if there is none.
+  function newestKit(api) {
+    const kits = KITS.filter((k) => k.api === api);
+    return kits[kits.length - 1] || null;
+  }
 
-function findKit(version) {
-  return KITS.find((k) => k.version === version) || null;
+  // The newest kit of the highest API version (alias kept from M1).
+  function currentKit(api = MAX_API_VERSION) {
+    return newestKit(api);
+  }
+
+  // { from, to } when a newer kit of the document's API exists, else null.
+  function outdatedKit(parts) {
+    const newest = newestKit(Number(parts.api));
+    if (!newest || newest.version === parts.kitVersion) return null;
+    return { from: parts.kitVersion, to: newest.version };
+  }
+
+  return { KITS, MAX_API_VERSION, findKit, currentKit, newestKit, outdatedKit };
 }
 
-// The newest published kit of an API version, or null if there is none.
-function newestKit(api) {
-  const kits = KITS.filter((k) => k.api === api);
-  return kits[kits.length - 1] || null;
-}
+const published = createKitRegistry(require('./published.json'), __dirname);
 
-// The newest kit of the highest API version (alias kept from M1).
-function currentKit(api = MAX_API_VERSION) {
-  return newestKit(api);
-}
-
-// { from, to } when a newer kit of the document's API exists, else null.
-function outdatedKit(parts) {
-  const newest = newestKit(Number(parts.api));
-  if (!newest || newest.version === parts.kitVersion) return null;
-  return { from: parts.kitVersion, to: newest.version };
-}
-
-module.exports = { KITS, MAX_API_VERSION, findKit, currentKit, newestKit, outdatedKit, kitSectionText, sha256 };
+module.exports = { createKitRegistry, ...published, kitSectionText, sha256 };

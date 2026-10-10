@@ -4,6 +4,7 @@ const path = require('node:path');
 const { parseDocument, lineOf } = require('./frame');
 const { checkManifest } = require('./manifest');
 const { findKit, sha256, MAX_API_VERSION } = require('../kit');
+const publishedModules = require('../modules');
 
 // The value may not contain quotes, so the kit's own source (which builds
 // this tag from string pieces) never matches.
@@ -39,10 +40,11 @@ function preview(text) {
 }
 
 // Checks a file against the document specification. Takes the file's bytes
-// (as read from disk) or its text.
+// (as read from disk) or its text. options.modules: the module registry
+// (tests inject one; default: the published modules).
 // Returns { ok, errors: [{ code, message, line? }], text?, parts?, api?, manifest? };
 // text is the decoded file.
-function checkDocument(input) {
+function checkDocument(input, { modules = publishedModules } = {}) {
   let html = input;
   if (typeof input !== 'string') {
     try {
@@ -101,6 +103,20 @@ function checkDocument(input) {
     errors.push(problem('kit-modified', `The kit section was modified. It must be the exact text of published kit ${kit.version}.`));
   } else if (String(kit.api) !== parts.api) {
     errors.push(problem('kit-api', `Kit ${kit.version} belongs to API v${kit.api}, but the document declares API v${parts.api}.`));
+  }
+
+  const names = parts.modules.map((m) => m.name);
+  if (names.some((name, i) => i > 0 && !(names[i - 1] < name))) {
+    errors.push(problem('module-order', 'Module lines must be sorted by name, each module once.'));
+  }
+  for (const m of parts.modules) {
+    const published = modules.findModule(m.name, m.version);
+    if (!published) {
+      errors.push(problem('module-unknown', `Module ${m.name} ${m.version} is not a published module.`));
+    } else if (sha256(m.text) !== published.hash) {
+      errors.push(problem('module-modified',
+        `The text of module ${m.name} was modified. It must be the exact text of published module ${m.name} ${m.version}.`));
+    }
   }
 
   const manifest = checkManifest(parts.manifest);

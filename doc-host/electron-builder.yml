@@ -8,6 +8,9 @@ directories:
 files:
   - src/**
   - kit/**
+  - modules/**
+  - "!modules/build.js"
+  - "!modules/src/**"
   - package.json
   - "!**/*.test.js"
 
