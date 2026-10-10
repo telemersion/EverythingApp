@@ -295,6 +295,12 @@ class Document {
       // reload's, not ours.
       if (generation !== this.generation) return true;
       this.acceptOnDisk(written);
+      // A first write fills in the document id. The page runs the same
+      // behaviour without it, so that alone is no reason to reload.
+      const writtenParts = checkDocument(written).parts;
+      if (sectionHashes({ ...writtenParts, docId: '' }).outsideData === this.running) {
+        this.running = this.known.outsideData;
+      }
       this.savedChange = Math.max(this.savedChange, snapshot.changes);
       // The write read the file and found it conforming.
       this.setStatus({

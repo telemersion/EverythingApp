@@ -24,6 +24,7 @@ const { fitBounds } = require('../src/workspace-file');
 const { parseDocument, buildDocument } = require('../src/frame');
 const { pathKey } = require('../src/write');
 const { findKit } = require('../kit');
+const { findModule } = require('../modules');
 const { describeStatus } = require('../src/status');
 const { createUpdates } = require('../src/updates');
 const { EventEmitter } = require('node:events');
@@ -97,6 +98,10 @@ async function run(dir) {
     await until(`to-do "${text}" added`, () => d.isDirty);
   };
   const dataOf = async (p) => JSON.parse(parseDocument(await fs.readFile(p, 'utf8')).parts.data);
+  const idOf = async (p) => parseDocument(await fs.readFile(p, 'utf8')).parts.docId;
+  // Data is designed for merging: lists are maps keyed by id (ADR 0006).
+  const count = (map) => Object.keys(map).length;
+  const texts = (items) => Object.values(items).sort((a, b) => (a.order < b.order ? -1 : 1)).map((i) => i.text);
 
   const doc = await openDoc(filePath);
   assert.equal(workspace.activeDocument(), doc);
@@ -106,7 +111,7 @@ async function run(dir) {
   const addRow = (label) => addRowTo(doc, label);
 
   step('the document runs hosted, without its own Save button');
-  // Kit 1.1.0 hides the document's fallback Save button in the host.
+  // The kit hides the document's fallback Save button in the host.
   assert.equal(await js('!!document.getElementById("add") && getComputedStyle(document.getElementById("save")).display === "none"'), true);
 
   step('documents cannot show native dialogs');
@@ -122,16 +127,26 @@ async function run(dir) {
   await until('dirty', () => doc.isDirty);
   assert.match(workspace.win.getTitle(), /^• hours\.ev\.html$/);
 
-  step('saving writes the row into the data block only');
+  step('the first save writes the row and the document id, nothing else');
+  assert.equal(parseDocument(original).parts.docId, '', 'the fixture has no id yet');
+  await js('window.notReloaded = true');
   assert.equal(await doc.save(), true);
   const saved = await fs.readFile(filePath, 'utf8');
   assert.equal(checkDocument(saved).ok, true);
   const before = parseDocument(original).parts;
   const after = parseDocument(saved).parts;
-  assert.deepEqual({ ...after, data: '' }, { ...before, data: '' }, 'everything but the data is unchanged');
-  assert.equal(JSON.parse(after.data).rows.length, 1);
+  assert.match(after.docId, /^[0-9a-f]{32}$/);
+  assert.equal(after.docId, doc.docId);
+  assert.deepEqual({ ...after, data: '', docId: '' }, { ...before, data: '' }, 'everything but the data and the id is unchanged');
+  assert.equal(count(JSON.parse(after.data).rows), 1);
   assert.equal(doc.isDirty, false);
   assert.equal(workspace.win.getTitle(), 'hours.ev.html');
+  const firstId = after.docId;
+
+  step('the host\'s own id write is not an outside change');
+  await wait(1000); // longer than the watcher's debounce
+  assert.equal(await js('window.notReloaded === true'), true, 'not reloaded');
+  assert.ok(!doc.status.updatedFromDisk, 'no "Updated from disk"');
 
   step('the previous version is in the version store');
   const [entry] = await fs.readdir(storeDir);
@@ -264,7 +279,8 @@ async function run(dir) {
   assert.deepEqual(sheets, [], 'no sheet');
   assert.equal(doc.status.dataConflict, false);
   assert.equal(doc.isDirty, false);
-  assert.deepEqual(JSON.parse(parseDocument(await readDisk()).parts.data).rows.length, 1, 'our data replaced theirs');
+  assert.equal(count(JSON.parse(parseDocument(await readDisk()).parts.data).rows), 1, 'our data replaced theirs');
+  assert.equal(parseDocument(await readDisk()).parts.docId, firstId, 'later saves keep the id');
 
   step('a data change on disk just before saving is caught at write time');
   await addRow('dirty again');
@@ -345,9 +361,10 @@ async function run(dir) {
   await addTodo(todo, 'Buy milk');
   assert.equal(await todo.save(), true);
   const todoSaved = parseDocument(await fs.readFile(todoPath, 'utf8')).parts;
-  assert.deepEqual({ ...todoSaved, data: '' }, { ...parseDocument(todoOriginal).parts, data: '' },
+  assert.match(todoSaved.docId, /^[0-9a-f]{32}$/, 'the first save writes the id');
+  assert.deepEqual({ ...todoSaved, data: '', docId: '' }, { ...parseDocument(todoOriginal).parts, data: '' },
     'everything but the data is unchanged');
-  assert.deepEqual(JSON.parse(todoSaved.data).items, [{ text: 'Buy milk', done: false }]);
+  assert.deepEqual(Object.values(JSON.parse(todoSaved.data).items).map(({ text, done }) => ({ text, done })), [{ text: 'Buy milk', done: false }]);
   assert.equal(await workspace.closeDocument(todo.id), true);
   assert.equal(todo.disposed, true);
   const reopened = await openDoc(todoPath);
@@ -421,7 +438,7 @@ async function run(dir) {
   await until('the document closed', () => other.disposed);
   assert.deepEqual(sheets.map((o) => [o.message, o.buttons]),
     [['Do you want to save the changes you made to hours.ev.html?', ['Save', "Don't save", 'Cancel']]]);
-  assert.equal((await dataOf(otherPath)).rows.length, 1, 'written');
+  assert.equal(count((await dataOf(otherPath)).rows), 1, 'written');
   assert.deepEqual(docsInOrder(workspace.model), [doc.id, reopened.id]);
   assert.equal(workspace.documentById(other.id), null);
   assert.equal(workspace.win.contentView.children.includes(other.view), false, 'its view left the window');
@@ -456,7 +473,7 @@ async function run(dir) {
   assert.equal(await slowSave, true);
   assert.deepEqual(prompts, [{ message: 'Do you want to save the changes you made to todo.ev.html?', afterWrite: true }]);
   assert.equal(workspace.documentById(reopened.id), reopened, 'the document stays');
-  assert.deepEqual((await dataOf(todoPath)).items.map((i) => i.text), ['Buy milk', 'Call Bob']);
+  assert.deepEqual(texts((await dataOf(todoPath)).items), ['Buy milk', 'Call Bob']);
   // A slow save that leaves the document clean: closing waits, then closes without a prompt.
   reopened.requestSnapshot = async function () {
     const snapshot = await takeSnapshot.call(this);
@@ -474,7 +491,7 @@ async function run(dir) {
   assert.equal(await cleanSave, true);
   assert.deepEqual(sheets, [], 'no prompt for a clean document');
   assert.equal(reopened.disposed, true);
-  assert.deepEqual((await dataOf(todoPath)).items.map((i) => i.text), ['Buy milk', 'Call Bob', 'Edit after the snapshot']);
+  assert.deepEqual(texts((await dataOf(todoPath)).items), ['Buy milk', 'Call Bob', 'Edit after the snapshot']);
   assert.deepEqual(docsInOrder(workspace.model), [doc.id]);
 
   step('Save all saves every document; a read-only one stops closing');
@@ -502,7 +519,7 @@ async function run(dir) {
   assert.deepEqual([summary.buttons, summary.defaultId, summary.cancelId], [['Save all', 'Review each…', 'Cancel'], 0, 2]);
   assert.equal(workspace.activeDocument(), other3, 'the read-only document is active');
   assert.deepEqual([doc.isDirty, todo3.isDirty, other3.isDirty], [false, false, true], 'the others were saved');
-  assert.equal((await dataOf(todoPath)).items.at(-1).text, 'Save all');
+  assert.equal(texts((await dataOf(todoPath)).items).at(-1), 'Save all');
   assert.equal(workspace.registry.documents.size, 3, 'nothing closed');
   // More than ten dirty documents: ten names, then the rest as a count.
   const twelve = Array.from({ length: 12 }, (_, i) => `d${i + 1}.ev.html`);
@@ -1017,6 +1034,46 @@ async function run(dir) {
   assert.deepEqual(emptyRect, workspace.layout.panes[0].document, "in the single pane's document area");
   assert.equal(workspace.win.getTitle(), 'EverythingApp');
 
+  step('a reload before the first save keeps the id assigned in memory');
+  const freshPath = path.join(dir, 'fresh.ev.html');
+  await fs.copyFile(fixture('hours-sheet'), freshPath);
+  const fresh = await openDoc(freshPath);
+  const memoryId = fresh.docId;
+  assert.match(memoryId, /^[0-9a-f]{32}$/);
+  await restyle('h1 { color: rgb(0, 0, 200); }', freshPath);
+  await until('the fresh copy reloaded', async () => !fresh.view.webContents.isLoading()
+    && (await fresh.view.webContents.executeJavaScript('getComputedStyle(document.querySelector("h1")).color')) === 'rgb(0, 0, 200)');
+  assert.equal(fresh.docId, memoryId, 'the file has no id yet: the one in memory stays');
+  await addRowTo(fresh, 'a row in the fresh copy');
+  assert.equal(await fresh.save(), true);
+  assert.equal(await idOf(freshPath), memoryId, 'the first save writes the id assigned on open');
+  assert.equal(await workspace.closeDocument(fresh.id), true);
+
+  step('a document with the codemirror module renders under the document CSP');
+  const editorPath = path.join(dir, 'editor.ev.html');
+  const editorScript = `
+const doc = EvKit.init();
+window.violations = [];
+document.addEventListener('securitypolicyviolation', (e) => window.violations.push(e.violatedDirective));
+const { EditorState, EditorView, keymap, history, defaultKeymap, historyKeymap } = EvKit.module('codemirror', 1);
+window.editor = new EditorView({
+  parent: document.getElementById('ev-app'),
+  state: EditorState.create({ doc: 'Hello', extensions: [history(), keymap.of([...defaultKeymap, ...historyKeymap]), EditorView.lineWrapping] }),
+});
+`;
+  const editorParts = { ...parseDocument(await fs.readFile(fixture('todo-list'), 'utf8')).parts,
+    docType: 'editor', title: 'Editor', style: '\n', manifest: '{}', data: '{}',
+    modules: [findModule('codemirror', '1.0.0')], script: editorScript };
+  await fs.writeFile(editorPath, buildDocument(editorParts), 'utf8');
+  assert.equal(checkDocument(await fs.readFile(editorPath)).ok, true);
+  const editor = await openDoc(editorPath);
+  const editorJs = (code) => editor.view.webContents.executeJavaScript(code);
+  await until('the editor rendered', () => editorJs('!!document.querySelector(".cm-editor")'));
+  assert.equal(await editorJs('document.querySelector(".cm-content").contentEditable'), 'true');
+  assert.equal(await editorJs('window.editor.state.doc.toString()'), 'Hello');
+  assert.deepEqual(await editorJs('window.violations'), [], 'no CSP violations');
+  assert.equal(await workspace.closeDocument(editor.id), true);
+
   step('an outdated kit shows its badge and banner');
   const kitDir = path.join(dir, 'kit');
   await fs.mkdir(kitDir);
@@ -1026,10 +1083,10 @@ async function run(dir) {
   const note = await openDoc(notePath);
   const noteJs = (code) => note.view.webContents.executeJavaScript(code);
   const described = () => describeStatus(note.status, { name: note.name, filePath: notePath });
-  assert.deepEqual(note.status.kitUpdate, { from: '1.0.0', to: '1.1.0' });
+  assert.deepEqual(note.status.kitUpdate, { from: '1.9.0', to: '2.0.0' });
   assert.equal(described().badge, 'kit-update');
   assert.deepEqual(described().banners.map((b) => [b.kind, b.message]),
-    [['kit-update', 'This document uses kit 1.0.0; 1.1.0 is available.']]);
+    [['kit-update', 'This document uses kit 1.9.0; 2.0.0 is available.']]);
   assert.equal(menu.getMenuItemById('update-kit').enabled, true);
   assert.equal(menu.getMenuItemById('undo-kit').enabled, false);
   await note.onBannerAction('kit-update', 'dismiss');
@@ -1050,17 +1107,18 @@ async function run(dir) {
   answer(0); // Update kit
   await note.onBannerAction('kit-update', 'update-kit');
   assert.deepEqual(sheets.map((o) => [o.message, o.detail, o.buttons, o.defaultId, o.cancelId]), [[
-    'Update the kit of note.ev.html from 1.0.0 to 1.1.0?',
+    'Update the kit of note.ev.html from 1.9.0 to 2.0.0?',
     'Only the kit is replaced. The previous file is kept in the version store. Your unsaved changes are saved with it.',
     ['Update kit', 'Cancel'], 0, 1,
   ]]);
   let afterKit = parseDocument(await fs.readFile(notePath, 'utf8')).parts;
-  assert.equal(afterKit.kitVersion, '1.1.0');
-  assert.equal(afterKit.kit, findKit('1.1.0').text);
+  assert.equal(afterKit.kitVersion, '2.0.0');
+  assert.equal(afterKit.kit, findKit('2.0.0').text);
   assert.equal(JSON.parse(afterKit.data).text, 'Remember the milk');
   assert.equal(afterKit.style, beforeKit.style);
   assert.equal(afterKit.script, beforeKit.script);
-  assert.deepEqual({ ...afterKit, kit: '', kitVersion: '', data: '' }, { ...beforeKit, kit: '', kitVersion: '', data: '' });
+  assert.match(afterKit.docId, /^[0-9a-f]{32}$/, 'a kit write also writes the id');
+  assert.deepEqual({ ...afterKit, kit: '', kitVersion: '', data: '', docId: '' }, { ...beforeKit, kit: '', kitVersion: '', data: '' });
   const stored = await versionNames();
   assert.equal(stored.length, 1, 'exactly one new version');
   assert.equal(await fs.readFile(path.join(noteStore, stored[0]), 'utf8'), noteOriginal, 'the previous file');
@@ -1070,21 +1128,21 @@ async function run(dir) {
   await until('the note shows its data', async () => (await noteJs('document.getElementById("text").value')) === 'Remember the milk');
   assert.equal(note.status.kitUpdate, null);
   const dataAfterUpdate = await dataSection();
-  assert.deepEqual(note.status.kitUpdated, { from: '1.0.0', to: '1.1.0' });
-  assert.deepEqual(described().banners.map((b) => [b.kind, b.message]), [['kit-updated', 'Kit updated to 1.1.0.']]);
+  assert.deepEqual(note.status.kitUpdated, { from: '1.9.0', to: '2.0.0' });
+  assert.deepEqual(described().banners.map((b) => [b.kind, b.message]), [['kit-updated', 'Kit updated to 2.0.0.']]);
   assert.equal(menu.getMenuItemById('update-kit').enabled, false);
   assert.equal(menu.getMenuItemById('undo-kit').enabled, true);
 
-  step('Undo brings kit 1.0.0 back');
+  step('Undo brings kit 1.9.0 back');
   answer();
   await note.onBannerAction('kit-updated', 'undo-kit');
   assert.deepEqual(sheets, [], 'no confirmation');
   afterKit = parseDocument(await fs.readFile(notePath, 'utf8')).parts;
-  assert.equal(afterKit.kitVersion, '1.0.0');
-  assert.equal(afterKit.kit, findKit('1.0.0').text);
+  assert.equal(afterKit.kitVersion, '1.9.0');
+  assert.equal(afterKit.kit, findKit('1.9.0').text);
   assert.equal(JSON.parse(afterKit.data).text, 'Remember the milk');
   assert.equal(note.status.kitUpdated, null);
-  assert.deepEqual(note.status.kitUpdate, { from: '1.0.0', to: '1.1.0' });
+  assert.deepEqual(note.status.kitUpdate, { from: '1.9.0', to: '2.0.0' });
   assert.equal(described().badge, 'kit-update');
   assert.equal(menu.getMenuItemById('undo-kit').enabled, false);
   assert.equal(menu.getMenuItemById('update-kit').enabled, true);
@@ -1106,7 +1164,7 @@ async function run(dir) {
   assert.equal(await note.undoKitUpdate(), false);
   assert.deepEqual(sheets.map((o) => [o.message, o.detail, o.buttons, o.defaultId, o.cancelId]), [[
     'Undo the kit update of note.ev.html?',
-    'Kit 1.0.0 is restored. The previous file is kept in the version store. Your unsaved changes are saved with it.',
+    'Kit 1.9.0 is restored. The previous file is kept in the version store. Your unsaved changes are saved with it.',
     ['Undo kit update', 'Cancel'], 0, 1,
   ]]);
   assert.equal(await fs.readFile(notePath, 'utf8'), beforeUndo, 'Cancel writes nothing');
@@ -1116,7 +1174,7 @@ async function run(dir) {
   assert.equal(await note.undoKitUpdate(), true);
   assert.equal(sheets.length, 1);
   afterKit = parseDocument(await fs.readFile(notePath, 'utf8')).parts;
-  assert.equal(afterKit.kitVersion, '1.0.0');
+  assert.equal(afterKit.kitVersion, '1.9.0');
   assert.equal(JSON.parse(afterKit.data).text, 'Edited after update');
   assert.equal((await versionNames()).length, 4);
   await until('the note reloaded', () => !note.view.webContents.isLoading());
@@ -1133,7 +1191,7 @@ async function run(dir) {
   answer(0, 2); // Update kit, then Cancel at the conflict sheet
   await note.updateKit();
   assert.deepEqual(sheets.map((o) => o.message), [
-    'Update the kit of note.ev.html from 1.0.0 to 1.1.0?',
+    'Update the kit of note.ev.html from 1.9.0 to 2.0.0?',
     'The data in note.ev.html was changed on disk since you opened it.',
   ]);
   assert.equal(await fs.readFile(notePath, 'utf8'), conflictFile, 'nothing written');
@@ -1210,8 +1268,8 @@ async function run(dir) {
   answer(0); // Save all
   await workspace.quit({ restart: true });
   assert.deepEqual(calls, [['quitAndInstall', true, true]], 'the update installs and the host restarts');
-  const rowsBefore = (await dataOf(fixture('hours-sheet'))).rows.length;
-  for (const p of updPaths) assert.equal((await dataOf(p)).rows.length, rowsBefore + 1, 'saved first');
+  const rowsBefore = count((await dataOf(fixture('hours-sheet'))).rows);
+  for (const p of updPaths) assert.equal(count((await dataOf(p)).rows), rowsBefore + 1, 'saved first');
 
   step('all checks passed');
 }
