@@ -9,6 +9,8 @@ const { buildMenu } = require('./menu');
 const { pathsFromArgv } = require('./argv');
 const { isolateUserData, attachProbe } = require('./probe');
 const { hostResolverRules, mainProbeChecks } = require('./resolver-rules');
+const { createHostLog } = require('./host-log');
+const { runCleanup } = require('./cleanup');
 
 app.setName('EverythingApp');
 // No names resolve but the update hosts: documents could leak data through
@@ -74,6 +76,7 @@ if (!app.requestSingleInstanceLock()) {
 
   app.whenReady().then(async () => {
     const userData = app.getPath('userData');
+    const log = createHostLog(path.join(userData, 'logs', 'host.log'));
     workspace = new Workspace({
       storeDir: path.join(userData, 'versions'),
       workspaceFile: path.join(userData, 'workspace.json'),
@@ -88,6 +91,14 @@ if (!app.requestSingleInstanceLock()) {
       await workspace.showError({ action: 'restore the workspace', err });
     }
     started = true;
+    // Background work nobody asked for: never a sheet, only the host log.
+    if (!process.env.EV_PROBE) {
+      runCleanup({
+        storeDir: path.join(userData, 'versions'),
+        openPaths: new Set(workspace.openDocuments().map((doc) => doc.filePath)),
+        log,
+      }).catch((err) => log.write('clean-up failed', err));
+    }
     // No open dialog: the empty state offers Open… (Task 10).
     await openAll([...early.splice(0), ...pathsFromArgv(process.argv, { isPackaged: app.isPackaged, cwd: process.cwd() })]);
   });
